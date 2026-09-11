@@ -1,0 +1,10 @@
+name: gaussian_opt_freq
+description: Optimisation + frequencies, B3LYP-D3(BJ)/6-31G(d). Sensible default for organic molecules.
+program: gaussian
+method: b3lyp
+basis: 6-31G(d)
+dispersion: gd3bj
+jobs: [opt, freq]
+resources:
+  mem: 8GB
+  nproc: 8

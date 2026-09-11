@@ -1,0 +1,11 @@
+name: orca_opt_freq
+description: Optimisation + frequencies, B3LYP-D3(BJ)/def2-SVP with RIJCOSX.
+program: orca
+method: B3LYP
+basis: def2-SVP
+dispersion: d3bj
+jobs: [opt, freq]
+extra_keywords: [RIJCOSX, def2/J, TightSCF]
+resources:
+  mem: 8GB
+  nproc: 8

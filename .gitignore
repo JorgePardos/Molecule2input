@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# Tests
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Recognition backends: multi-gigabyte virtual environments and model
+# weights, installed by `m2i setup` into ~/.m2i by default. Never commit them.
+.m2i/
+.venvs/
+
+# Generated calculation inputs -- these are outputs, not source
+*.gjf
+*.chk
+*.log
+out/
+!examples/**
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

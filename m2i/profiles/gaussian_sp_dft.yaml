@@ -1,0 +1,10 @@
+name: gaussian_sp_dft
+description: Single-point energy at a larger basis, typically on a geometry optimised elsewhere.
+program: gaussian
+method: m062x
+basis: def2TZVP
+jobs: [sp]
+extra_keywords: [int=ultrafine]
+resources:
+  mem: 16GB
+  nproc: 16

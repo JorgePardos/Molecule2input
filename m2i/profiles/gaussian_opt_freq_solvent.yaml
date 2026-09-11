@@ -1,0 +1,13 @@
+name: gaussian_opt_freq_solvent
+description: Optimisation + frequencies in implicit chloroform (SMD), B3LYP-D3(BJ)/6-31G(d,p).
+program: gaussian
+method: b3lyp
+basis: 6-31G(d,p)
+dispersion: gd3bj
+solvent:
+  model: smd
+  name: chloroform
+jobs: [opt, freq]
+resources:
+  mem: 8GB
+  nproc: 8

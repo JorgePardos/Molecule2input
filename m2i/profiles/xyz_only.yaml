@@ -1,0 +1,9 @@
+name: xyz_only
+description: Just write the optimised geometries as .xyz files, no calculation recipe.
+program: xyz
+method: ""
+basis: ""
+jobs: []
+resources:
+  mem: 4GB
+  nproc: 4
