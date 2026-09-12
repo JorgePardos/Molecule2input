@@ -16,14 +16,14 @@ from . import __version__, config, pipeline
 from .chem.conformers import ConformerOptions, EmbeddingError
 from .chem.sanitize import MoleculeParseError
 from .recognition import BackendError, describe_backends, recognize
-from .recognition.manual import ManualBackend, from_molfile
+from .recognition.manual import STRUCTURE_FILE_SUFFIXES, ManualBackend, from_molfile
 from .recognition.registry import resolve_backends
 from .report import validate
 from .types import IssueLog, RecognitionResult
 from .writers import WriterError, known_programs
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tif", ".tiff", ".webp"}
-MOLFILE_SUFFIXES = {".mol", ".sdf", ".mdl"}
+MOLFILE_SUFFIXES = set(STRUCTURE_FILE_SUFFIXES)
 SMILES_LIST_SUFFIXES = {".smi", ".smiles", ".txt", ".csv"}
 
 
@@ -94,7 +94,9 @@ def build_parser() -> argparse.ArgumentParser:
     image_parser.add_argument(
         "--smiles", help="structure read by you (required until a vision backend is installed)"
     )
-    image_parser.add_argument("--molfile", type=Path, help="structure as a .mol/.sdf file")
+    image_parser.add_argument(
+        "--molfile", type=Path, help="structure as a .mol/.sdf/.cdxml/.cdx file"
+    )
     image_parser.add_argument(
         "--backend",
         action="append",
@@ -102,9 +104,74 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     mol_parser = subparsers.add_parser(
-        "from-molfile", parents=[common], help="build inputs from a .mol/.sdf (e.g. ChemDraw export)"
+        "from-molfile",
+        parents=[common],
+        help="build inputs from a ChemDraw (.cdxml/.cdx) or molfile (.mol/.sdf)",
     )
     mol_parser.add_argument("molfile", type=Path)
+    mol_parser.add_argument(
+        "--isomer",
+        type=int,
+        help="for a metal complex: which arrangement, as numbered in the list (1 = best fit)",
+    )
+    mol_parser.add_argument(
+        "--sub",
+        action="append",
+        default=[],
+        metavar="ATOM=GROUPS",
+        help="substituents a drawing leaves out, e.g. P6=iPr2; repeatable",
+    )
+    mol_parser.add_argument(
+        "--oxidation",
+        action="append",
+        default=[],
+        metavar="EL=N",
+        help="for a metal complex: oxidation state of the metal, e.g. Mn=1",
+    )
+
+    cif_parser = subparsers.add_parser(
+        "from-cif",
+        parents=[common],
+        help="build inputs from a crystal structure (.cif), keeping its geometry",
+    )
+    cif_parser.add_argument("cif", type=Path)
+    cif_parser.add_argument(
+        "--species", type=int, help="which species of the crystal (1 = the listed first)"
+    )
+    cif_parser.add_argument(
+        "--oxidation",
+        action="append",
+        default=[],
+        metavar="EL=N",
+        help="oxidation state of a metal, e.g. Fe=2; repeatable",
+    )
+    cif_parser.add_argument(
+        "--keep-xray-hydrogens",
+        action="store_true",
+        help="do not extend C-H/N-H/O-H to standard lengths",
+    )
+    cif_parser.add_argument(
+        "--allow-missing-hydrogens",
+        action="store_true",
+        help="write the input without the hydrogens the CIF lacks (not recommended)",
+    )
+    cif_parser.add_argument(
+        "--h",
+        action="append",
+        default=[],
+        metavar="ATOM=N",
+        help="hydrogens to put on an atom, overriding the proposal, e.g. O1=2; repeatable",
+    )
+    cif_parser.add_argument(
+        "--accept-hydrogens",
+        action="store_true",
+        help="accept the proposed hydrogens even when they do not match the formula",
+    )
+    cif_parser.add_argument(
+        "--mirror",
+        action="store_true",
+        help="write the mirror image (the other enantiomer)",
+    )
 
     batch_parser = subparsers.add_parser(
         "batch", parents=[common], help="process a folder or a list of SMILES"
@@ -162,6 +229,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_from_image(args)
         if args.command == "from-molfile":
             return cmd_from_molfile(args)
+        if args.command == "from-cif":
+            return cmd_from_cif(args)
         if args.command == "batch":
             return cmd_batch(args)
         if args.command == "setup":
@@ -236,8 +305,185 @@ def cmd_from_molfile(args) -> int:
     if not args.molfile.is_file():
         print(f"error: no such file: {args.molfile}", file=sys.stderr)
         return 1
+    from .organometallic import has_metal, read_raw
+
+    try:
+        drawn = read_raw(args.molfile)
+    except Exception:  # noqa: BLE001 - the organic reader gives the proper error
+        drawn = []
+    if any(has_metal(m) for m in drawn):
+        return cmd_organometallic(args)
     recognition = from_molfile(args.molfile).recognize(None)
     return _process_one(recognition, args)
+
+
+def _read_drawing(path: Path, substituents: dict[str, str]):
+    from .organometallic import read
+
+    try:
+        return read(path, substituents)
+    except BackendError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return None
+
+
+def _show_drawing(drawing, path: Path) -> None:
+    print(f"\nMetal complex drawn in {path.name}: {drawing.metal_symbol} with "
+          f"{len(drawing.donors)} donor atoms")
+    for donor in drawing.donors:
+        print(f"  {drawing.names[donor]}")
+    for level, _, message in drawing.notes:
+        print(f"  {'!' if level == 'warning' else '-'} {message}")
+
+
+def cmd_organometallic(args) -> int:
+    """A drawn metal complex: read it, settle the isomer, build it, ask the rest.
+
+    The isomer is read from the drawing -- bond directions on the page, wedges
+    and hashes -- and proposed; when the drawing does not decide, it is asked.
+    Oxidation state, charge and spin are asked as for a crystal.
+    """
+    from .crystal import jobs as crystal_jobs
+    from .crystal.coordination import analyse
+    from .organometallic import arrangements, build, mirror_partners
+    from .organometallic import jobs as om_jobs
+
+    interactive = stdin_is_terminal() and not args.yes
+    substituents = {}
+    for item in args.sub:
+        atom, _, spec = item.partition("=")
+        if not atom.strip() or not spec.strip():
+            print(f"error: --sub expects ATOM=GROUPS, got {item!r}", file=sys.stderr)
+            return 2
+        substituents[atom.strip()] = spec.strip()
+
+    drawing = _read_drawing(args.molfile, substituents)
+    if drawing is None:
+        return 1
+    _show_drawing(drawing, args.molfile)
+
+    # What a drawing leaves out is filled with hydrogen, and hydrogen is rarely
+    # what was meant: it is the first thing worth asking about.
+    guessed = [name for name, added in drawing.completed.items()
+               if name not in substituents and set(added) == {"H"}]
+    if guessed and interactive:
+        print("\nThose atoms are unfinished in the drawing. Write the real groups "
+              "(iPr2, Ph2, Cy2, Me, OMe...), or leave blank to keep the hydrogens.")
+        for name in guessed:
+            answer = _ask(f"  {name}: ")
+            if answer:
+                substituents[name] = answer
+        if any(name in substituents for name in guessed):
+            drawing = _read_drawing(args.molfile, substituents)
+            if drawing is None:
+                return 1
+            _show_drawing(drawing, args.molfile)
+    elif guessed and not args.yes:
+        print("error: hydrogens would be used where the drawing says nothing ("
+              + ", ".join(guessed) + "). Give the real groups with --sub P6=iPr2, "
+              "or accept the hydrogens with --yes.", file=sys.stderr)
+        return 1
+
+    options = arrangements(drawing.donors, drawing.drawn, drawing.chelated, labels=drawing.labels)
+    if not options:
+        print(f"error: {len(drawing.donors)} atoms are bound to {drawing.metal_symbol}; m2i builds "
+              "2- to 6-coordinate complexes from drawings. Is one of those bonds drawn by mistake? "
+              "(a bare line ending at the metal is read as a methyl)", file=sys.stderr)
+        return 1
+    mirrors = mirror_partners(options, drawing.labels, drawing.chelated)
+    print("\nArrangements, best fit to the drawing first:")
+    for number, option in enumerate(options[:6], start=1):
+        twin = f"; mirror image of [{mirrors[number - 1] + 1}]" if number - 1 in mirrors else ""
+        print(f"  [{number}] fit {option.misfit:.2f}  {om_jobs.describe(option, drawing)}{twin}")
+    if len(options) > 6:
+        print(f"  ... {len(options) - 6} more (see --isomer)")
+
+    choice = 1
+    if args.isomer:
+        if not 1 <= args.isomer <= len(options):
+            print(f"error: --isomer must be between 1 and {len(options)}", file=sys.stderr)
+            return 2
+        choice = args.isomer
+    elif om_jobs.ambiguous(options):
+        why = ("they are mirror images, and only wedges and hashes on the bonds to the metal "
+               "tell those apart" if om_jobs.mirror_only(options, drawing)
+               else "they fit it about equally well")
+        if interactive:
+            print(f"  The drawing does not decide between [1] and [2]: {why}.")
+            choice = _ask_int("Which arrangement? ", default=1, lowest=1, highest=len(options))
+        else:
+            print(f"  ! The drawing does not decide between [1] and [2] ({why}); using [1]. "
+                  "Choose another with --isomer.")
+    chosen = options[choice - 1]
+
+    try:
+        built = build(drawing, chosen, seed=args.seed)
+    except BackendError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    species = built.species
+    print(f"\nBuilt {species.formula} in 3D (distance geometry + UFF: a starting geometry "
+          "for your optimisation):")
+    for centre in analyse(species):
+        print("  " + "\n  ".join(centre.describe()))
+    for level, _, message in built.notes:
+        print(f"  ! {message}")
+
+    oxidation = {}
+    for item in args.oxidation:
+        element, _, value = item.partition("=")
+        try:
+            oxidation[element.strip()] = int(value)
+        except ValueError:
+            print(f"error: --oxidation expects EL=N, got {item!r}", file=sys.stderr)
+            return 2
+    symbol = drawing.metal_symbol
+    if interactive and symbol not in oxidation:
+        value = _ask_int(f"Oxidation state of {symbol} (blank to skip): ", default=None)
+        if value is not None:
+            oxidation[symbol] = value
+    for line in crystal_jobs.spin_hint(species, oxidation):
+        print("  " + line)
+
+    suggestion = drawing.drawn_charge
+    print(f"  Charge: the formal charges drawn add up to {suggestion:+d} (a drawing often "
+          "leaves charges out: check it).")
+    charge = args.charge
+    if charge is None and interactive:
+        charge = _ask_int("Charge of the complex: ", default=suggestion)
+    if charge is None:
+        print(f"error: pass --charge for a metal complex (the drawing adds up to {suggestion:+d})",
+              file=sys.stderr)
+        return 2
+    lowest = crystal_jobs.default_multiplicity(species, charge, oxidation)
+    mult = args.mult
+    if mult is None and interactive:
+        mult = _ask_int("Multiplicity: ", default=lowest, lowest=1)
+    if mult is None:
+        print(f"error: pass --mult for a metal complex (the lowest the electron count "
+              f"allows is {lowest})", file=sys.stderr)
+        return 2
+
+    profile = config.load_profile(args.profile).merged_with(
+        program=args.program, method=args.method, basis=args.basis
+    )
+    log = IssueLog()
+    try:
+        written = om_jobs.write(
+            built, drawing, source=args.molfile, charge=charge, multiplicity=mult,
+            profile=profile, output_dir=Path(args.output_dir), log=log,
+            oxidation=oxidation, name=args.name,
+        )
+    except BackendError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    for issue in log:
+        if issue.code.startswith("basis."):
+            print(f"  ! {issue.message}")
+    print(f"\nWrote {len(written)} file(s):")
+    for path in written:
+        print(f"  {path}")
+    return 0
 
 
 def cmd_batch(args) -> int:
@@ -292,6 +538,292 @@ def cmd_batch(args) -> int:
     return 1 if failures == len(entries) else 0
 
 
+def cmd_from_cif(args) -> int:
+    """A crystal structure in, an input with its experimental geometry out.
+
+    Nothing is generated: the molecule is rebuilt from the crystal, so the
+    stereochemistry and the shape of every ligand are the measured ones. What
+    the crystal cannot say -- oxidation state, charge, spin -- is asked.
+    """
+    from .crystal import CrystalError, read_cif
+    from .crystal import jobs as crystal_jobs
+
+    if not args.cif.is_file():
+        print(f"error: no such file: {args.cif}", file=sys.stderr)
+        return 1
+
+    log = IssueLog()
+    try:
+        reading = read_cif(args.cif, log, normalise_hydrogens=not args.keep_xray_hydrogens)
+    except CrystalError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    interactive = stdin_is_terminal() and not args.yes
+
+    source = f" (COD {reading.cod_id})" if reading.cod_id else ""
+    z = f", Z = {reading.z:g}" if reading.z else ""
+    print(f"\nCrystal: {reading.path.name}{source}, {reading.spacegroup}{z}")
+    print("Species in the unit cell:")
+    for number, species in enumerate(reading.species, start=1):
+        metal = f"   metal: {', '.join(sorted(set(species.metals)))}" if species.metals else ""
+        print(f"  [{number}] {species.formula:<18} x{species.copies:<3} {species.n_atoms:>4} atoms{metal}")
+    for formula in reading.extended:
+        print(f"  [-] {formula:<18} extended network (not a molecule)")
+
+    index = 0
+    if args.species:
+        if not 1 <= args.species <= len(reading.species):
+            print(f"error: --species must be between 1 and {len(reading.species)}", file=sys.stderr)
+            return 2
+        index = args.species - 1
+    elif interactive and len(reading.species) > 1:
+        index = _ask_int("Which species? ", default=1, lowest=1, highest=len(reading.species)) - 1
+    species = reading.species[index]
+    asked = crystal_jobs.questions(reading, index)
+
+    if asked.centres:
+        print(f"\nCoordination in {species.formula}:")
+        for centre in asked.centres:
+            print("  " + "\n  ".join(centre.describe()))
+    _print_issues(log, args.verbose, header="\nNotes:")
+
+    priorities = _ask_planar_priorities(asked.centres, interactive)
+    notes, chiral = crystal_jobs.chirality_notes(reading, asked.centres, priorities)
+    if chiral:
+        print("\nChirality:")
+        for note in notes:
+            print(f"  {note}")
+        if args.mirror:
+            print("  Writing the mirror image, as asked (--mirror).")
+
+    from .crystal.hydrogens import lacking
+
+    completed, hydrogens_added = None, None
+    if reading.missing_hydrogens and not lacking(reading, index):
+        print(
+            f"\nThe hydrogens missing from the crystal belong to other species; "
+            f"{species.formula} is complete."
+        )
+    elif reading.missing_hydrogens and not args.allow_missing_hydrogens:
+        outcome = _complete_hydrogens(reading, index, args, interactive)
+        if isinstance(outcome, int):
+            return outcome
+        completed, hydrogens_added = outcome
+        species = completed
+
+    oxidation = {}
+    for item in args.oxidation:
+        element, _, value = item.partition("=")
+        try:
+            oxidation[element.strip()] = int(value)
+        except ValueError:
+            print(f"error: --oxidation expects EL=N, got {item!r}", file=sys.stderr)
+            return 2
+
+    if asked.needs_answers:
+        print(f"\n{species.formula} contains {', '.join(asked.metals)}: the crystal does not "
+              "tell the oxidation state, charge or spin, so they are up to you.")
+        if interactive:
+            for element in asked.metals:
+                if element not in oxidation:
+                    value = _ask_int(f"Oxidation state of {element} (blank to skip): ", default=None)
+                    if value is not None:
+                        oxidation[element] = value
+        for line in crystal_jobs.spin_hint(species, oxidation):
+            print("  " + line)
+
+    suggestion = asked.suggested_charge
+    print(f"  Charge: {'suggested ' + format(suggestion, '+d') if suggestion is not None else 'no suggestion'} ({asked.charge_reason})")
+
+    charge = args.charge
+    if charge is None and interactive:
+        charge = _ask_int("Charge of the species: ", default=suggestion)
+    if charge is None and not asked.needs_answers and suggestion is not None:
+        charge = suggestion
+    if charge is None:
+        print(
+            "error: the charge is not known; pass --charge"
+            + (f" (suggested: {suggestion:+d})" if suggestion is not None else ""),
+            file=sys.stderr,
+        )
+        return 2
+
+    mult = args.mult
+    default_mult = crystal_jobs.default_multiplicity(species, charge, oxidation)
+    if mult is None and interactive:
+        mult = _ask_int("Multiplicity: ", default=default_mult, lowest=1)
+    if mult is None and not asked.needs_answers:
+        mult = default_mult
+    if mult is None:
+        print(
+            f"error: a metal complex needs its spin state stated; pass --mult "
+            f"(the lowest the electron count allows is {default_mult})",
+            file=sys.stderr,
+        )
+        return 2
+
+    profile = config.load_profile(args.profile).merged_with(
+        program=args.program, method=args.method, basis=args.basis
+    )
+    try:
+        written = crystal_jobs.write(
+            reading,
+            index,
+            charge=charge,
+            multiplicity=mult,
+            profile=profile,
+            output_dir=Path(args.output_dir),
+            log=log,
+            oxidation=oxidation,
+            name=args.name,
+            allow_missing_hydrogens=args.allow_missing_hydrogens,
+            mirror=args.mirror,
+            priorities=priorities,
+            species=completed,
+            hydrogens_added=hydrogens_added,
+        )
+    except CrystalError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    later = [i for i in log if i.code.startswith("basis.")]
+    for issue in later:
+        print(f"  ! {issue.message}")
+    print(f"\nWrote {len(written)} file(s):")
+    for path in written:
+        print(f"  {path}")
+    return 0
+
+
+def _complete_hydrogens(reading, index, args, interactive):
+    """Put back the missing hydrogens: (species, what was added), or an exit code.
+
+    The proposal is applied on its own when it matches the formula. When it
+    does not, the doubtful atoms are asked about -- or, without a terminal,
+    named, so they can be set with --h.
+    """
+    from .crystal import hydrogens
+
+    overrides = {}
+    for item in args.h:
+        atom, _, value = item.partition("=")
+        try:
+            overrides[atom.strip()] = int(value)
+        except ValueError:
+            print(f"error: --h expects ATOM=N, got {item!r}", file=sys.stderr)
+            return 2
+
+    proposal = hydrogens.plan(reading, index).with_counts(overrides)
+    target = f", the formula needs {proposal.target}" if proposal.target is not None else ""
+    print(f"\nMissing hydrogens: {proposal.total} proposed{target}.")
+    for site in proposal.sites:
+        mark = "" if site.certain else "  (assumed)"
+        print(f"  {site.label:<8} +{site.count}  {site.reason}{mark}")
+
+    if not proposal.matches and not args.accept_hydrogens:
+        if not interactive:
+            doubtful = ", ".join(f"{s.label} (+{s.count})" for s in proposal.doubtful) or "none"
+            print(
+                "error: the proposed hydrogens do not match the formula, so where they "
+                f"go is not settled. Doubtful atoms: {doubtful}. Set them with --h ATOM=N, "
+                "accept the proposal with --accept-hydrogens, or skip them with "
+                "--allow-missing-hydrogens.",
+                file=sys.stderr,
+            )
+            return 2
+        answers = {}
+        for site in proposal.doubtful:
+            options = "/".join(str(o) for o in site.options) if site.options else ""
+            hint = f" ({options})" if options else ""
+            answers[site.label] = _ask_int(
+                f"  {site.label}: {site.reason}. Hydrogens{hint}?", default=site.count, lowest=0
+            )
+        proposal = proposal.with_counts(answers)
+        if not proposal.matches:
+            needed = proposal.target if proposal.target is not None else "an unknown number"
+            answer = _ask(
+                f"  That places {proposal.total} H; the formula needs {needed}. Continue? [y/N] "
+            ).lower()
+            if answer not in ("y", "yes", "s", "si"):
+                print("Aborted; nothing was written.")
+                return 130
+
+    completed, added = hydrogens.apply(reading.species[index], proposal)
+    print(f"  Placed {sum(s.count for s in proposal.sites)} hydrogens: {completed.formula}.")
+    return completed, added
+
+
+def _ask_planar_priorities(centres, interactive) -> dict[str, str]:
+    """Ask which substituent ranks higher where m2i could not decide."""
+    priorities = {}
+    for centre in centres:
+        for ring in centre.planar:
+            if ring.certain or not interactive:
+                continue
+            print(f"\n  Ring {ring.ring_label}: {ring.reason}.")
+            answer = _ask(
+                f"  Which has the higher CIP priority, {ring.first} or {ring.second}? "
+                f"[{ring.first}] "
+            )
+            priorities[ring.ring_label] = answer if answer in (ring.first, ring.second) else ring.first
+    return priorities
+
+
+def stdin_is_terminal() -> bool:
+    """Whether someone can actually answer a question typed at them.
+
+    ``isatty()`` alone is not enough on Windows: input redirected from NUL
+    reports itself as a terminal, and the first question then dies with
+    EOFError. A real console is one whose mode can be queried.
+    """
+    try:
+        if not sys.stdin or not sys.stdin.isatty():
+            return False
+    except (AttributeError, ValueError):
+        return False
+    if sys.platform != "win32":
+        return True
+    try:
+        import ctypes
+        import msvcrt
+
+        handle = msvcrt.get_osfhandle(sys.stdin.fileno())
+        mode = ctypes.c_uint()
+        return bool(ctypes.windll.kernel32.GetConsoleMode(handle, ctypes.byref(mode)))
+    except Exception:  # noqa: BLE001 - if in doubt, do not ask
+        return False
+
+
+def _ask(prompt: str) -> str:
+    """input() that treats a closed stdin as no answer rather than a crash."""
+    try:
+        return input(prompt).strip()
+    except EOFError:
+        print()
+        return ""
+
+
+def _ask_int(prompt: str, *, default=None, lowest=None, highest=None):
+    """Ask for an integer; blank takes the default (None when there is none)."""
+    shown = f"{prompt.rstrip()} [{default}] " if default is not None else prompt
+    while True:
+        answer = _ask(shown)
+        if not answer:
+            return default
+        try:
+            value = int(answer)
+        except ValueError:
+            print("  a whole number, please")
+            continue
+        if lowest is not None and value < lowest:
+            print(f"  at least {lowest}, please")
+            continue
+        if highest is not None and value > highest:
+            print(f"  at most {highest}, please")
+            continue
+        return value
+
+
 def cmd_setup(args) -> int:
     from . import backends
 
@@ -325,9 +857,9 @@ def cmd_setup(args) -> int:
         return 0
 
     spec = backends.SPECS[name]
-    if not args.yes and sys.stdin.isatty() and not backends.status(name)["installed"]:
+    if not args.yes and stdin_is_terminal() and not backends.status(name)["installed"]:
         print(backends.describe(spec))
-        answer = input(f"\nDownload and install {name}? [y/N] ").strip().lower()
+        answer = _ask(f"\nDownload and install {name}? [y/N] ").lower()
         if answer not in ("y", "yes", "s", "si", "sí"):
             print("Aborted.")
             return 130
@@ -481,7 +1013,7 @@ def _confirm(molecule, options: pipeline.PipelineOptions, log: IssueLog) -> bool
     except Exception as exc:
         print(f"\n(could not render the check image: {exc})")
 
-    if not sys.stdin.isatty():
+    if not stdin_is_terminal():
         print(
             "Not an interactive terminal; re-run with --yes once you have checked "
             "the structure.",
@@ -489,7 +1021,7 @@ def _confirm(molecule, options: pipeline.PipelineOptions, log: IssueLog) -> bool
         )
         return False
 
-    answer = input("Is this the molecule you drew? [y/N] ").strip().lower()
+    answer = _ask("Is this the molecule you drew? [y/N] ").lower()
     return answer in ("y", "yes", "s", "si", "sí")
 
 

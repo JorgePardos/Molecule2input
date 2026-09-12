@@ -9,7 +9,7 @@ line 1, so the layout is built explicitly here rather than by string concat.
 from __future__ import annotations
 
 from ..types import IssueLog, JobSpec
-from .base import BaseWriter, check_basis_coverage, check_size, format_geometry
+from .base import BaseWriter, check_size, format_geometry, report_ecp, uncovered_elements
 
 # Job keywords that need no argument and map straight through.
 JOB_KEYWORDS = {
@@ -30,9 +30,9 @@ class GaussianWriter(BaseWriter):
     extension = ".gjf"
 
     def render(self, job: JobSpec, log: IssueLog) -> str:
-        check_basis_coverage(job, log)
         check_size(job, log)
         self._check_gen_basis(job, log)
+        self._ecp = self._ecp_block(job, log)
 
         blocks = [self._main_step(job, log)]
         for extra in job.profile.link_jobs:
@@ -51,6 +51,9 @@ class GaussianWriter(BaseWriter):
         lines.append(f"{job.charge} {job.multiplicity}")
         lines.append(format_geometry(job.elements, job.coords))
         lines.append("")  # terminates the geometry
+        if self._ecp:
+            lines.append(self._ecp)
+            lines.append("")
         for section in job.profile.extra_sections:
             lines.append(section.rstrip("\n"))
             lines.append("")
@@ -85,6 +88,9 @@ class GaussianWriter(BaseWriter):
         lines.append("")
         lines.append(f"{job.charge} {job.multiplicity}")
         lines.append("")
+        if self._ecp and basis == profile.basis:
+            lines.append(self._ecp)
+            lines.append("")
         for section in extra.get("extra_sections", ()):
             lines.append(str(section).rstrip("\n"))
             lines.append("")
@@ -115,6 +121,9 @@ class GaussianWriter(BaseWriter):
         basis = basis if basis is not None else profile.basis
         dispersion = profile.dispersion if dispersion == "" else dispersion
 
+        if self._ecp and basis == profile.basis:
+            basis = "genecp"
+
         parts = ["#p"]
         parts += [JOB_KEYWORDS.get(j, j) for j in jobs if j]
         if method and basis:
@@ -128,6 +137,28 @@ class GaussianWriter(BaseWriter):
             parts.append(f"scrf=({model},solvent={profile.solvent.name})")
         parts += [k for k in extra_keywords if k]
         return " ".join(parts)
+
+    _ecp: str = ""
+
+    def _ecp_block(self, job: JobSpec, log: IssueLog) -> str:
+        """A genecp basis + ECP section when the basis stops short of an element.
+
+        Gaussian stops at the first atom its basis does not define. A Pople
+        basis ends at Kr, so any 4d/5d metal needs its own basis and an
+        effective core potential: the usual recipe is LANL2DZ on the metal and
+        the chosen basis everywhere else.
+        """
+        heavy = uncovered_elements(job)
+        if not heavy:
+            return ""
+        ecp = job.profile.ecp_basis or "LANL2DZ"
+        light = [e for e in dict.fromkeys(job.elements) if e not in heavy]
+        report_ecp(job, heavy, ecp, job.profile.basis, log)
+        lines = []
+        if light:
+            lines += [f"{' '.join(light)} 0", job.profile.basis, "****"]
+        lines += [f"{' '.join(heavy)} 0", ecp, "****", "", f"{' '.join(heavy)} 0", ecp]
+        return "\n".join(lines)
 
     def _check_gen_basis(self, job: JobSpec, log: IssueLog) -> None:
         basis = (job.profile.basis or "").lower()

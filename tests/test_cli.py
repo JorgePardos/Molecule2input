@@ -37,17 +37,52 @@ def test_verification_is_required_without_yes(tmp_path, capsys, monkeypatch):
 
 
 def test_verification_prompt_accepts_yes(tmp_path, monkeypatch):
-    monkeypatch.setattr("sys.stdin.isatty", lambda: True, raising=False)
+    monkeypatch.setattr("m2i.cli.stdin_is_terminal", lambda: True)
     monkeypatch.setattr("builtins.input", lambda _: "y")
     assert run("from-smiles", "CCO", "-o", str(tmp_path)) == 0
     assert list(tmp_path.glob("*.gjf"))
 
 
 def test_verification_prompt_accepts_a_refusal(tmp_path, monkeypatch):
-    monkeypatch.setattr("sys.stdin.isatty", lambda: True, raising=False)
-    monkeypatch.setattr("builtins.input", lambda _: "n")
+    monkeypatch.setattr("m2i.cli.stdin_is_terminal", lambda: True)
+    asked = []
+    monkeypatch.setattr("builtins.input", lambda prompt: asked.append(prompt) or "n")
     assert run("from-smiles", "CCO", "-o", str(tmp_path)) == 130
     assert list(tmp_path.glob("*.gjf")) == []
+    assert asked, "the refusal must come from the question, not from skipping it"
+
+
+def test_a_closed_stdin_is_no_answer_rather_than_a_crash(tmp_path, monkeypatch):
+    """On Windows, input redirected from NUL claims to be a terminal."""
+    monkeypatch.setattr("m2i.cli.stdin_is_terminal", lambda: True)
+
+    def closed(_prompt):
+        raise EOFError
+
+    monkeypatch.setattr("builtins.input", closed)
+    assert run("from-smiles", "CCO", "-o", str(tmp_path)) == 130
+    assert list(tmp_path.glob("*.gjf")) == []
+
+
+def test_from_cif_asks_about_the_metal_and_uses_the_answers(tmp_path, monkeypatch, capsys):
+    from pathlib import Path
+
+    import pytest
+
+    pytest.importorskip("gemmi")
+
+    monkeypatch.setattr("m2i.cli.stdin_is_terminal", lambda: True)
+    answers = iter(["3", "1", "2"])  # Fe oxidation state, charge, multiplicity
+    prompts = []
+    monkeypatch.setattr("builtins.input", lambda p: prompts.append(p) or next(answers))
+
+    ferrocene = Path(__file__).parent / "data" / "cod" / "7033930.cif"
+    assert run("from-cif", str(ferrocene), "-o", str(tmp_path)) == 0
+
+    assert any("Oxidation state of Fe" in p for p in prompts)
+    assert "Fe(+3) is d5" in capsys.readouterr().out
+    gjf = next(tmp_path.glob("*.gjf")).read_text(encoding="utf-8")
+    assert "\n1 2\n" in gjf  # ferrocenium, doublet
 
 
 def test_program_and_basis_overrides(tmp_path):

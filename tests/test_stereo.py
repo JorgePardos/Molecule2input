@@ -126,9 +126,10 @@ def test_molblock_wedges_drive_the_stereochemistry(log):
 
 # -- phosphorus that only looks stereogenic ------------------------------
 
+# dTDP-beta-L-rhamnose dianion; stereochemistry checked against PubChem CID 121966.
 DTDP_RHAMNOSE = (
-    "Cc1cn([C@H]2C[C@H](O)[C@@H](COP(=O)([O-])OP(=O)([O-])O[C@@H]3O[C@@H](C)"
-    "[C@H](O)[C@@H](O)[C@@H]3O)O2)c(=O)[nH]c1=O"
+    "Cc1cn([C@H]2C[C@H](O)[C@@H](COP(=O)([O-])OP(=O)([O-])O[C@H]3O[C@@H](C)"
+    "[C@H](O)[C@@H](O)[C@H]3O)O2)c(=O)[nH]c1=O"
 )
 
 

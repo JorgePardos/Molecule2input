@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ..types import IssueLog, JobSpec
-from .base import BaseWriter, check_basis_coverage, check_size, format_geometry
+from .base import BaseWriter, check_size, format_geometry, report_ecp, uncovered_elements
 
 JOB_KEYWORDS = {
     "opt": "Opt",
@@ -22,7 +22,6 @@ class OrcaWriter(BaseWriter):
     extension = ".inp"
 
     def render(self, job: JobSpec, log: IssueLog) -> str:
-        check_basis_coverage(job, log)
         check_size(job, log)
         profile = job.profile
         resources = profile.resources
@@ -38,6 +37,10 @@ class OrcaWriter(BaseWriter):
         if solvent_block:
             lines.append(solvent_block)
 
+        ecp_block = self._ecp_block(job, log)
+        if ecp_block:
+            lines.append(ecp_block)
+
         for section in profile.extra_sections:
             lines.append(section.rstrip("\n"))
 
@@ -46,6 +49,20 @@ class OrcaWriter(BaseWriter):
         lines.append(format_geometry(job.elements, job.coords, width=16, decimals=8))
         lines.append("*")
         lines.append("")
+        return "\n".join(lines)
+
+    def _ecp_block(self, job: JobSpec, log: IssueLog) -> str:
+        """Per-element basis and def2 ECP for what the main basis leaves out."""
+        heavy = uncovered_elements(job)
+        if not heavy:
+            return ""
+        basis = job.profile.ecp_basis or "def2-TZVP"
+        report_ecp(job, heavy, f"{basis} + def2-ECP", job.profile.basis, log)
+        lines = ["%basis"]
+        for element in heavy:
+            lines.append(f'  NewGTO {element} "{basis}" end')
+            lines.append(f'  NewECP {element} "def2-ECP" end')
+        lines.append("end")
         return "\n".join(lines)
 
     def _keyword_line(self, job: JobSpec) -> str:

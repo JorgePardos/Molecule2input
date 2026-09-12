@@ -95,35 +95,34 @@ def format_geometry(
     return "\n".join(lines)
 
 
-def check_basis_coverage(job: JobSpec, log: IssueLog) -> None:
-    """Warn when the basis-set family is unlikely to cover a heavy element."""
+def uncovered_elements(job: JobSpec) -> list[str]:
+    """Elements the chosen basis-set family has no definition for, lightest first."""
     basis = (job.profile.basis or "").lower().replace(" ", "")
     if not basis or basis in ("gen", "genecp"):
-        return
-
+        return []
     limit = None
     for family, max_z in BASIS_MAX_Z.items():
         if basis.startswith(family) or family in basis:
             limit = max_z
             break
     if limit is None:
-        return
-
-    heavy = sorted(
-        {
-            symbol
-            for symbol in set(job.elements)
-            if ATOMIC_NUMBERS.get(symbol, 0) > limit
-        },
+        return []
+    return sorted(
+        {symbol for symbol in set(job.elements) if ATOMIC_NUMBERS.get(symbol, 0) > limit},
         key=lambda s: ATOMIC_NUMBERS.get(s, 0),
     )
-    if heavy:
-        log.warn(
-            "basis.coverage",
-            f"Basis {job.profile.basis} probably has no definition for "
-            f"{', '.join(heavy)}. Switch to a def2 basis, or use gen/genecp with "
-            "an explicit basis block in the profile's extra_sections.",
-        )
+
+
+def report_ecp(job: JobSpec, heavy: list[str], ecp: str, rest: str, log: IssueLog) -> None:
+    one = len(heavy) == 1
+    log.warn(
+        "basis.auto_ecp",
+        f"{', '.join(heavy)} {'is' if one else 'are'} beyond {job.profile.basis}, "
+        f"which has no definition for {'it' if one else 'them'}: written with {ecp} "
+        f"(basis and effective core potential) for {', '.join(heavy)} and {rest} "
+        "for the rest. Set ecp_basis in the profile to choose another, or use a "
+        "def2 basis throughout.",
+    )
 
 
 def check_size(job: JobSpec, log: IssueLog, *, soft_limit: int = 150) -> None:

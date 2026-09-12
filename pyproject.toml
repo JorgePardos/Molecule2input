@@ -18,6 +18,7 @@ dependencies = [
 
 [project.optional-dependencies]
 gui = ["streamlit>=1.30"]
+crystal = ["gemmi>=0.6"]
 dev = ["pytest>=7"]
 
 [project.scripts]
@@ -27,7 +28,7 @@ m2i = "m2i.cli:main"
 include = ["m2i*"]
 
 [tool.setuptools.package-data]
-m2i = ["profiles/*.yaml"]
+m2i = ["profiles/*.yaml", "gui/viewer/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

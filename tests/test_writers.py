@@ -110,7 +110,8 @@ def test_gen_basis_with_a_block_is_accepted():
     assert not log.has_errors()
 
 
-def test_heavy_element_outside_the_basis_family_warns():
+def test_a_heavy_element_outside_the_basis_gets_an_ecp():
+    """6-31G(d) stops at Kr, and Gaussian would stop at the W. It gets LANL2DZ."""
     profile = config.load_profile("gaussian_opt_freq")
     job = JobSpec(
         name="wcl",
@@ -122,8 +123,12 @@ def test_heavy_element_outside_the_basis_family_warns():
         profile=profile,
     )
     log = IssueLog()
-    get_writer("gaussian").render(job, log)
-    assert "basis.coverage" in codes(log)
+    text = get_writer("gaussian").render(job, log)
+    assert "b3lyp/genecp" in text
+    tail = text[text.index("W   ") :]
+    assert "Cl 0\n6-31G(d)\n****\nW 0\nLANL2DZ\n****\n\nW 0\nLANL2DZ\n" in tail
+    assert text.endswith("LANL2DZ\n\n")  # Gaussian needs the blank line after the ECP
+    assert "basis.auto_ecp" in codes(log)
 
 
 def test_def2_basis_covers_heavy_elements_without_warning():
@@ -138,8 +143,9 @@ def test_def2_basis_covers_heavy_elements_without_warning():
         profile=profile,
     )
     log = IssueLog()
-    get_writer("gaussian").render(job, log)
-    assert "basis.coverage" not in codes(log)
+    text = get_writer("gaussian").render(job, log)
+    assert "basis.auto_ecp" not in codes(log)
+    assert "genecp" not in text
 
 
 # -- ORCA ----------------------------------------------------------------

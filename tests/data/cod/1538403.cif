@@ -1,0 +1,67 @@
+#------------------------------------------------------------------------------
+#$Date: 2016-09-16 14:55:27 +0300 (Fri, 16 Sep 2016) $
+#$Revision: 186592 $
+#$URL: file:///home/coder/svn-repositories/_RELOADED_COD/cod-reloaded/cif/1/53/84/1538403.cif $
+#------------------------------------------------------------------------------
+#
+# This file is available in the Crystallography Open Database (COD),
+# http://www.crystallography.net/
+#
+# All data on this site have been placed in the public domain by the
+# contributors.
+#
+data_1538403
+loop_
+_publ_author_name
+'Milburn, G.H.W.'
+'Truter, M.R.'
+_publ_section_title
+;
+ The Crystal Structures of cis- and trans-Dichlorodiammineplatinum(II)
+;
+_journal_name_full
+;
+Journal of the Chemical Society A: Inorganic, Physical, Theoretical (1966-1971)
+;
+_journal_page_first              1609
+_journal_page_last               1616
+_journal_volume                  1966
+_journal_year                    1966
+_chemical_formula_sum            'Cl2 H6 N2 Pt'
+_chemical_name_systematic        'Pt Cl2 (N H3)2'
+_space_group_IT_number           14
+_symmetry_space_group_name_Hall  '-P 2yab'
+_symmetry_space_group_name_H-M   'P 1 21/a 1'
+_cell_angle_alpha                90
+_cell_angle_beta                 95.2
+_cell_angle_gamma                90
+_cell_formula_units_Z            2
+_cell_length_a                   7.99
+_cell_length_b                   6
+_cell_length_c                   5.45
+_cell_volume                     260.198
+_citation_journal_id_ASTM        JCSIAP
+_cod_data_source_file            Milburn_JCSIAP_1966_1475.cif
+_cod_data_source_block           H6Cl2N2Pt1
+_cod_original_cell_volume        260.1977
+_cod_original_sg_symbol_Hall     '-P 2ybc (z,y,-x)'
+_cod_original_formula_sum        'H6 Cl2 N2 Pt1'
+_cod_database_code               1538403
+loop_
+_symmetry_equiv_pos_as_xyz
+x,y,z
+-x+1/2,y+1/2,-z
+-x,-y,-z
+x-1/2,-y-1/2,z
+loop_
+_atom_site_label
+_atom_site_type_symbol
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+_atom_site_occupancy
+_atom_site_U_iso_or_equiv
+_atom_site_attached_hydrogens
+Pt1 Pt+2 0 0 0 1 0.0 0
+Cl1 Cl-1 0.023 0.299 0.272 1 0.0 0
+N1 N-3 0.178 -0.162 0.227 1 0.0 3

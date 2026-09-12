@@ -29,3 +29,6 @@ out/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Local editor/agent configuration
+.claude/
