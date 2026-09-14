@@ -1,5 +1,6 @@
-# The browser interface as a container: what Hugging Face Spaces builds, and
-# what runs the same anywhere else (docker build -t m2i . && docker run -p 7860:7860 m2i).
+# The browser interface as a container. deploy/lab/ runs it on a machine of
+# your own behind a Cloudflare tunnel; it runs the same on any Docker host
+# (docker build -t m2i . && docker run -p 7860:7860 m2i).
 FROM python:3.11-slim
 
 # RDKit draws the 2D check image through libXrender; OpenCV, which DECIMER
@@ -8,7 +9,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends libxrender1 libxext6 libgl1 libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# Spaces run the container as uid 1000; owning the home directory keeps the
+# An unprivileged user (uid 1000, as Spaces expect); owning the home keeps the
 # per-session temporary folders writable, and puts DECIMER's weights (which
 # it keeps in ~/.data) inside the image.
 RUN useradd -m -u 1000 user
@@ -22,11 +23,12 @@ ENV HOME=/home/user \
     STREAMLIT_SERVER_HEADLESS=true \
     STREAMLIT_BROWSER_GATHER_USAGE_STATS=false \
     STREAMLIT_SERVER_MAX_UPLOAD_SIZE=20 \
-    STREAMLIT_SERVER_ENABLE_CORS=false \
-    STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION=false
-# XSRF protection is off because a Space shows the app inside an iframe on
-# another domain, where Streamlit's XSRF cookie never arrives and every upload
-# would be refused. Nothing here is behind a login for such a request to abuse.
+    STREAMLIT_SERVER_ENABLE_CORS=true \
+    STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION=true
+# Served on its own address (a tunnel, a reverse proxy), Streamlit's XSRF
+# protection works and stays on. Only where the page is shown inside an iframe
+# on another domain -- a Hugging Face Space -- does its cookie never arrive;
+# there both settings have to be false, in the Space's variables.
 
 WORKDIR $HOME/app
 # Layers from slowest to change to fastest, so that a code change rebuilds in

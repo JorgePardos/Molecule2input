@@ -23,9 +23,12 @@ asking you to confirm structures that could not have been misread.
   `PhCH2OH`) are read out of the file and expanded; substituents nobody drew
   are filled with hydrogen, said out loud, and asked for (`--sub P6=iPr2`, a
   question at the terminal, a table in the browser).
-- **Web deployment**: a `Dockerfile` for a Hugging Face Space (or any Docker
-  host), `deploy/push_space.sh` to publish, and a hosted mode
-  (`M2I_HOSTED=1`) that keeps every visitor in their own session.
+- **Web deployment** from a Linux machine of your own through a free
+  Cloudflare tunnel: `deploy/lab/m2i.sh` (check, start, url, update…),
+  `docs/DEPLOY.md`, a `Dockerfile` that runs on any Docker host, and a hosted
+  mode (`M2I_HOSTED=1`) that keeps every visitor in their own session and
+  clears sessions unused for a day. `deploy/push_space.sh` publishes to a
+  Hugging Face Space instead, which needs a paid plan since July 2026.
 - **Photos on the web**: the image includes DECIMER, the model for hand-drawn
   structures, kept loaded between pictures.
 - `docs/MANUAL.md`, a full user manual; this changelog.

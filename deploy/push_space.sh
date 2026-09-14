@@ -1,5 +1,9 @@
 #!/bin/sh
 # Publish the committed state of the browser interface to a Hugging Face Space.
+# Docker Spaces need a paid plan since July 2026; the free route is
+# deploy/lab/ (docs/DEPLOY.md). In the Space's variables, set
+# STREAMLIT_SERVER_ENABLE_CORS=false and STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION=false:
+# a Space shows the page inside a frame, where uploads are refused otherwise.
 #
 #   deploy/push_space.sh https://huggingface.co/spaces/<user>/<space>
 #

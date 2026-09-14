@@ -477,16 +477,17 @@ The 3D viewer (3Dmol.js) is bundled with m2i and works without a network.
 
 ### Hosted
 
-m2i also runs as a web application for other people — a Hugging Face Space,
-or any Docker host; see [the README](../README.md#run-it-as-a-website). What
-differs from running it on your own machine:
+m2i also runs as a website for other people, from a Linux machine of your own
+behind a Cloudflare tunnel; see [DEPLOY.md](DEPLOY.md). What differs from
+running it on your own computer:
 
-- each visitor works in a private session; uploads and outputs stay in it;
+- each visitor works in a private session; uploads and outputs stay in it,
+  and are removed a day after they were last used;
 - there is no "save to folder" option and no server paths are shown: what you
   download is the file;
 - uploads are limited to 20 MB;
 - the photo model is loaded once for the whole server, in the background, as
-  soon as someone opens the page; after the server has been asleep, the first
+  soon as someone opens the page; right after the server starts, the first
   photo can take a minute.
 
 ## 10. Command reference

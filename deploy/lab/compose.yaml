@@ -1,0 +1,46 @@
+# m2i on a Linux machine of your own, reachable from the internet through a
+# Cloudflare tunnel -- no open ports, no public IP. Driven by ./m2i.sh.
+#
+#   quick tunnel  (default)  free, no account; a random https://*.trycloudflare.com
+#                            address that changes whenever the tunnel restarts
+#   named tunnel             a fixed address on a domain of yours in Cloudflare;
+#                            put TUNNEL_TOKEN=... in deploy/lab/.env
+name: m2i
+
+x-logs: &logs
+  # A server runs for months: keep Docker's logs from filling the disk.
+  logging:
+    driver: json-file
+    options: {max-size: "10m", max-file: "3"}
+
+services:
+  app:
+    build:
+      context: ../..
+    image: m2i:latest
+    restart: unless-stopped
+    # Reachable from this machine only (http://localhost:7860), for checking.
+    # Everyone else comes in through the tunnel.
+    ports:
+      - "127.0.0.1:7860:7860"
+    <<: *logs
+
+  tunnel-quick:
+    image: cloudflare/cloudflared:latest
+    profiles: [quick]
+    command: tunnel --no-autoupdate --url http://app:7860
+    depends_on:
+      app: {condition: service_healthy}
+    restart: unless-stopped
+    <<: *logs
+
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    profiles: [named]
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+    depends_on:
+      app: {condition: service_healthy}
+    restart: unless-stopped
+    <<: *logs

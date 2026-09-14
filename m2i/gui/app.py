@@ -20,7 +20,6 @@ from __future__ import annotations
 import hashlib
 import io
 import sys
-import tempfile
 from dataclasses import replace
 from pathlib import Path
 
@@ -34,6 +33,7 @@ from rdkit import Chem  # noqa: E402
 
 from m2i import __version__, config, pipeline  # noqa: E402
 from m2i.chem.conformers import ConformerOptions  # noqa: E402
+from m2i.gui import hosting  # noqa: E402
 from m2i.gui.hosting import HOSTED  # noqa: E402
 from m2i.preprocess import ImageError, estimate_drawing_style, prepare_image  # noqa: E402
 from m2i.recognition import BackendError, recognize  # noqa: E402
@@ -710,8 +710,11 @@ def _manual(smiles: str) -> RecognitionResult:
 def _workspace() -> Path:
     """A private temporary folder for this session's uploads."""
     if "workspace" not in st.session_state:
-        st.session_state["workspace"] = tempfile.mkdtemp(prefix="m2i-session-")
-    return Path(st.session_state["workspace"])
+        st.session_state["workspace"] = str(hosting.new_session_folder())
+    folder = Path(st.session_state["workspace"])
+    # Swept away while its visitor was gone for a day: start it again empty.
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
 
 
 def _save_upload(upload) -> tuple[Path, str]:

@@ -110,31 +110,38 @@ get their own pages, with a 3D view that works offline.
 
 ## Run it as a website
 
-The repository is ready to run as a
-[Hugging Face Space](https://huggingface.co/docs/hub/spaces-sdks-docker): the
-block at the top of this file is the Space configuration and the `Dockerfile`
-builds the image, DECIMER included. Create a Space with the Docker SDK
-(huggingface.co/new-space), then publish the last commit to it:
+m2i runs as a website from a Linux machine you already have — a lab
+workstation, a spare PC — reached from anywhere through a free Cloudflare
+tunnel: no open ports, no public IP, HTTPS, and photos included. On that
+machine, with Docker installed:
 
 ```bash
-sh deploy/push_space.sh https://huggingface.co/spaces/<user>/<space>
+sh deploy/lab/m2i.sh check
 ```
-
-git asks for your Hugging Face username and, as the password, an access token
-with write permission. The Space receives a snapshot of what the image needs,
-not this repository's history (Spaces refuse histories with binary files
-outside Git LFS). The same image runs on any Docker host:
-
 ```bash
-docker build -t m2i . && docker run -p 7860:7860 m2i
+sh deploy/lab/m2i.sh start
+```
+```bash
+sh deploy/lab/m2i.sh url
 ```
 
-Served to other people, each visitor works in a private session: uploads
-(up to 20 MB), readings and output files stay in it, and no paths of the
-server are shown. The photo model is loaded once for the whole server, in the
-background, when the first visitor opens the page; after that a photo takes a
-couple of seconds. The image is about 4 GB and DECIMER uses about 2.4 GB of
-memory once loaded, which the free CPU tier of Spaces (16 GB) holds easily.
+The first start builds the image (15–25 minutes); `url` prints the address to
+share. The step-by-step guide — installing Docker, a fixed address on your own
+domain, restricting access to your group, troubleshooting — is in
+[docs/DEPLOY.md](https://github.com/JorgePardos/Molecule2input/blob/main/docs/DEPLOY.md).
+
+The machine needs Linux (x86_64 or arm64), 4 GB of memory for m2i (the photo
+model alone uses 2.4 GB), 10 GB of disk, and outbound internet access. Each
+visitor works in a private session; uploads (up to 20 MB) and generated files
+stay on that machine, and are removed a day after they were last used.
+
+The same image runs on any Docker host (`docker build -t m2i .`). Hugging
+Face Spaces also run it, but Docker Spaces need a paid plan since July 2026;
+the block at the top of this file is their configuration,
+`deploy/push_space.sh` publishes to one, and there
+`STREAMLIT_SERVER_ENABLE_CORS` and `STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION`
+must be set to `false` in the Space's variables, because the page is shown
+inside a frame on another domain.
 
 ## What it protects you from
 
@@ -160,9 +167,9 @@ memory once loaded, which the free CPU tier of Spaces (16 GB) holds easily.
 ## Status
 
 Verified on Windows 11 with Python 3.11 and DECIMER on CPU, from the command
-line and in the browser, locally and in hosted mode. The Docker image itself
-has not been built outside Hugging Face yet; every package it pins has a Linux
-wheel.
+line and in the browser, locally and in hosted mode. The Docker image has not
+been built on a Linux machine yet; every package it pins has Linux wheels for
+both x86_64 and arm64.
 
 ```bash
 python -m pytest -q
