@@ -100,8 +100,8 @@ def main() -> None:
         _preload_recognition()
     st.title("Molecule to calculation input")
     st.caption(
-        f"m2i {__version__} - read a structure, check it, and generate the input "
-        "for the program you use"
+        f"m2i {__version__} - give it a structure, and download the input for the "
+        "program you use"
     )
 
     settings = sidebar()

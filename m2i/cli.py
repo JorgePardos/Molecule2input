@@ -987,6 +987,7 @@ def _process_one(
 
     decision = review.assess(molecule, log)
     if not decision.needed:
+        print(f"  Review        not needed: {decision.summary()}")
         review.record(log, decision, confirmed=None)
     elif args.yes:
         review.record(log, decision, confirmed=False)
@@ -1112,6 +1113,19 @@ def _smiles_loader(smiles: str):
 
 def _molfile_loader(path: Path):
     def load(log: IssueLog) -> RecognitionResult:
+        from .organometallic import has_metal, read_raw
+
+        try:
+            metal = any(has_metal(m) for m in read_raw(path))
+        except Exception:  # noqa: BLE001 - the organic reader reports a bad file
+            metal = False
+        if metal:
+            # Read as an organic molecule, a complex comes out as nonsense
+            # ([CH3][Pt]...), and a batch cannot ask what a complex needs.
+            raise BackendError(
+                "a metal complex: build it with from-molfile, which settles the isomer "
+                "and asks for the oxidation state, charge and spin"
+            )
         return from_molfile(path).recognize(None)
 
     return load

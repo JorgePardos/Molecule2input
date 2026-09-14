@@ -313,3 +313,20 @@ def test_batch_writes_whether_each_structure_needs_a_look(tmp_path):
     assert run("batch", str(listing), "-o", str(out), "--yes") == 0
     row = next(csv.DictReader(open(out / "manifest.csv", encoding="utf-8")))
     assert row["review"] == "not needed"  # typed, not read from a picture
+
+
+def test_batch_refuses_a_metal_complex_instead_of_misreading_it(tmp_path):
+    """Through the organic route a complex comes out as [CH3][Pt]... without a word."""
+    import csv
+    import shutil
+    from pathlib import Path
+
+    source = tmp_path / "drawings"
+    source.mkdir()
+    shutil.copy(Path(__file__).parent / "data" / "drawings" / "bare_phosphine.cdxml", source)
+    out = tmp_path / "out"
+    assert run("batch", str(source), "-o", str(out), "--yes") != 0
+    row = next(csv.DictReader(open(out / "manifest.csv", encoding="utf-8")))
+    assert row["status"] == "failed"
+    assert "from-molfile" in row["warning_detail"]
+    assert not list(out.glob("*.gjf"))
