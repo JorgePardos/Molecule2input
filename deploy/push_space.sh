@@ -18,7 +18,7 @@ remote="${1:?usage: deploy/push_space.sh https://huggingface.co/spaces/<user>/<s
 root=$(git rev-parse --show-toplevel)
 revision=$(git -C "$root" rev-parse --short HEAD)
 
-if [ -n "$(git -C "$root" status --porcelain -- Dockerfile requirements-web.txt README.md LICENSE m2i)" ]; then
+if [ -n "$(git -C "$root" status --porcelain -- Dockerfile requirements-web.txt requirements-decimer.txt README.md LICENSE m2i)" ]; then
     echo "error: commit your changes first; the Space gets the last commit, not the working tree." >&2
     exit 1
 fi
@@ -26,7 +26,7 @@ fi
 snapshot=$(mktemp -d)
 trap 'rm -rf "$snapshot"' EXIT
 
-git -C "$root" archive HEAD Dockerfile .dockerignore requirements-web.txt README.md LICENSE m2i \
+git -C "$root" archive HEAD Dockerfile .dockerignore requirements-web.txt requirements-decimer.txt README.md LICENSE m2i \
     | tar -x -C "$snapshot"
 
 cd "$snapshot"

@@ -67,7 +67,35 @@ EMBEDDING_CACHE_SIZE = 6
 st.set_page_config(page_title="m2i - molecule to input", page_icon="⚗️", layout="wide")
 
 
+@st.cache_resource(show_spinner=False)
+def _preload_recognition() -> bool:
+    """Load the recognition models once per server, in the background.
+
+    A model takes most of a minute to load and a couple of seconds to read a
+    picture once loaded. Served to other people, that minute is spent as soon
+    as someone opens the page -- while they pick their photo -- instead of on
+    their first reading. Runs once for the whole process, not per visitor.
+    """
+    import threading
+
+    from m2i.recognition import _subprocess
+
+    def load() -> None:
+        for backend in installed_vision_backends():
+            try:
+                _subprocess.persistent_worker(backend.name, backend.spec.worker).ask(
+                    {"mode": "warmup"}, _subprocess.DEFAULT_TIMEOUT
+                )
+            except BackendError:
+                pass  # the first real reading will say what is wrong
+
+    threading.Thread(target=load, name="m2i-preload", daemon=True).start()
+    return True
+
+
 def main() -> None:
+    if HOSTED:
+        _preload_recognition()
     st.title("Molecule to calculation input")
     st.caption(
         f"m2i {__version__} - read a structure, check it, and generate the input "

@@ -173,9 +173,14 @@ hides what only makes sense on your own machine (a folder to save into, paths
 on the server's disk, `m2i setup` instructions). Uploads are capped at 20 MB.
 The 3D viewer is bundled, so the page needs no network of its own.
 
-The recognition models are the only heavy part, and only pictures need them:
-SMILES, ChemDraw, molfiles and CIFs work without them, and the hosted image
-leaves them out.
+The image includes DECIMER, the model for hand-drawn structures, in its own
+environment with its weights (it is what a photo of a drawing needs, and
+nothing else reads one). MolScribe is left out: it adds 2.5 GB for clean
+depictions, and whoever has the ChemDraw file does better uploading it. The
+model is loaded once per server and kept in memory, in a process of its own
+that takes the pictures in turn: loading takes most of a minute, a reading
+takes a couple of seconds after that. The loading starts when the first
+visitor opens the page, so it is usually done by the time a photo is chosen.
 
 ## Crystal structures (.cif)
 

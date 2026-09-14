@@ -2,13 +2,15 @@
 # what runs the same anywhere else (docker build -t m2i . && docker run -p 7860:7860 m2i).
 FROM python:3.11-slim
 
-# RDKit draws the 2D check image through libXrender, which the slim image lacks.
+# RDKit draws the 2D check image through libXrender; OpenCV, which DECIMER
+# reads pictures with, needs libGL and GLib. The slim image has none of them.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libxrender1 libxext6 \
+    && apt-get install -y --no-install-recommends libxrender1 libxext6 libgl1 libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Spaces run the container as uid 1000; owning the home directory keeps the
-# per-session temporary folders writable.
+# per-session temporary folders writable, and puts DECIMER's weights (which
+# it keeps in ~/.data) inside the image.
 RUN useradd -m -u 1000 user
 USER user
 ENV HOME=/home/user \
@@ -27,14 +29,24 @@ ENV HOME=/home/user \
 # would be refused. Nothing here is behind a login for such a request to abuse.
 
 WORKDIR $HOME/app
-# Dependencies first, pinned: a code change then rebuilds in seconds, and the
-# image is the combination the test suite passed with.
+# Layers from slowest to change to fastest, so that a code change rebuilds in
+# seconds instead of reinstalling TensorFlow.
 COPY --chown=user requirements-web.txt .
 RUN pip install --no-cache-dir --user -r requirements-web.txt
+
+# DECIMER, for hand-drawn pictures, in its own environment exactly as
+# `m2i setup decimer` makes it locally: the packages, the weights, and a real
+# reading of a probe drawing before it is marked ready. Only the modules the
+# installer needs are copied here.
+COPY --chown=user requirements-decimer.txt .
+COPY --chown=user m2i/__init__.py m2i/backends.py m2i/types.py ./m2i/
+COPY --chown=user m2i/recognition ./m2i/recognition
+RUN PIP_CONSTRAINT=$HOME/app/requirements-decimer.txt PIP_NO_CACHE_DIR=1 \
+    python -c "from m2i.backends import install; install('decimer')"
 
 COPY --chown=user m2i ./m2i
 
 EXPOSE 7860
-HEALTHCHECK --interval=60s --timeout=5s --start-period=60s \
+HEALTHCHECK --interval=60s --timeout=5s --start-period=120s \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:7860/_stcore/health')"
 CMD ["streamlit", "run", "m2i/gui/app.py"]
