@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from m2i import cli
+from m2i.types import RecognitionResult
 
 
 def run(*args) -> int:
@@ -28,28 +31,54 @@ def test_from_smiles_writes_the_expected_files(tmp_path, capsys):
     assert "C[C@H](N)C(=O)O" in capsys.readouterr().out
 
 
-def test_verification_is_required_without_yes(tmp_path, capsys, monkeypatch):
-    """Without --yes and without a terminal, nothing may be written."""
+def test_a_typed_structure_is_written_without_asking(tmp_path, monkeypatch):
+    """Nothing was recognised, so there is nothing to confirm."""
+    monkeypatch.setattr("m2i.cli.stdin_is_terminal", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda _: pytest.fail("asked about a typed SMILES"))
+    assert run("from-smiles", "C[C@H](N)C(=O)O", "-o", str(tmp_path)) == 0
+    record = json.loads(next(tmp_path.glob("*.m2i.json")).read_text())
+    assert "review.not_needed" in {issue["code"] for issue in record["issues"]}
+
+
+def read_picture_as(monkeypatch, tmp_path, smiles, confidence):
+    """from-image with DECIMER replaced by a reading chosen by the test."""
+    from PIL import Image
+
+    image = tmp_path / "photo.png"
+    Image.new("RGB", (300, 300), "white").save(image)
+    reading = RecognitionResult(smiles=smiles, confidence=confidence, backend="decimer")
+    monkeypatch.setattr("m2i.cli.resolve_backends", lambda names, log: ["decimer"])
+    monkeypatch.setattr("m2i.cli.recognize", lambda *args, **kwargs: reading)
+    return image
+
+
+def test_a_doubtful_picture_is_not_written_without_a_terminal(tmp_path, monkeypatch):
     monkeypatch.setattr("sys.stdin.isatty", lambda: False, raising=False)
-    code = run("from-smiles", "CCO", "-o", str(tmp_path))
-    assert code == 130
+    image = read_picture_as(monkeypatch, tmp_path, "CCO", confidence=0.5)
+    assert run("from-image", str(image), "-o", str(tmp_path)) == 130
     assert list(tmp_path.glob("*.gjf")) == []
 
 
-def test_verification_prompt_accepts_yes(tmp_path, monkeypatch):
-    monkeypatch.setattr("m2i.cli.stdin_is_terminal", lambda: True)
-    monkeypatch.setattr("builtins.input", lambda _: "y")
-    assert run("from-smiles", "CCO", "-o", str(tmp_path)) == 0
-    assert list(tmp_path.glob("*.gjf"))
-
-
-def test_verification_prompt_accepts_a_refusal(tmp_path, monkeypatch):
+def test_stereochemistry_read_from_a_picture_is_always_shown(tmp_path, monkeypatch, capsys):
+    """DECIMER writes stereocentres instead of measuring them: even a confident
+    reading with one is asked about."""
     monkeypatch.setattr("m2i.cli.stdin_is_terminal", lambda: True)
     asked = []
-    monkeypatch.setattr("builtins.input", lambda prompt: asked.append(prompt) or "n")
-    assert run("from-smiles", "CCO", "-o", str(tmp_path)) == 130
+    monkeypatch.setattr("builtins.input", lambda prompt: asked.append(prompt) or "y")
+    image = read_picture_as(monkeypatch, tmp_path, "C[C@H](N)C(=O)O", confidence=0.99)
+    assert run("from-image", str(image), "-o", str(tmp_path)) == 0
+    assert asked
+    assert "written by the model" in capsys.readouterr().out
+    record = json.loads(next(tmp_path.glob("*.m2i.json")).read_text())
+    assert "review.confirmed" in {issue["code"] for issue in record["issues"]}
+
+
+def test_a_refusal_writes_nothing(tmp_path, monkeypatch):
+    monkeypatch.setattr("m2i.cli.stdin_is_terminal", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda prompt: "n")
+    image = read_picture_as(monkeypatch, tmp_path, "CCO", confidence=0.4)
+    assert run("from-image", str(image), "-o", str(tmp_path)) == 130
     assert list(tmp_path.glob("*.gjf")) == []
-    assert asked, "the refusal must come from the question, not from skipping it"
 
 
 def test_a_closed_stdin_is_no_answer_rather_than_a_crash(tmp_path, monkeypatch):
@@ -60,8 +89,17 @@ def test_a_closed_stdin_is_no_answer_rather_than_a_crash(tmp_path, monkeypatch):
         raise EOFError
 
     monkeypatch.setattr("builtins.input", closed)
-    assert run("from-smiles", "CCO", "-o", str(tmp_path)) == 130
+    image = read_picture_as(monkeypatch, tmp_path, "CCO", confidence=0.4)
+    assert run("from-image", str(image), "-o", str(tmp_path)) == 130
     assert list(tmp_path.glob("*.gjf")) == []
+
+
+def test_a_confident_plain_reading_goes_straight_through(tmp_path, monkeypatch):
+    monkeypatch.setattr("m2i.cli.stdin_is_terminal", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda _: pytest.fail("asked about a clear reading"))
+    image = read_picture_as(monkeypatch, tmp_path, "c1ccccc1O", confidence=0.97)
+    assert run("from-image", str(image), "-o", str(tmp_path)) == 0
+    assert list(tmp_path.glob("*.gjf"))
 
 
 def test_from_cif_asks_about_the_metal_and_uses_the_answers(tmp_path, monkeypatch, capsys):
@@ -213,7 +251,7 @@ def test_setup_list_states_the_cost_before_downloading(capsys, monkeypatch, tmp_
     monkeypatch.setenv("M2I_BACKEND_HOME", str(tmp_path))
     assert run("setup", "--list") == 0
     out = capsys.readouterr().out
-    assert "molscribe" in out and "decimer" in out
+    assert "decimer" in out and "molscribe" not in out
     assert "GB" in out  # the download size is stated up front
     assert "hand-drawn" in out
 
@@ -236,9 +274,9 @@ def test_setup_remove_is_safe_when_nothing_is_installed(capsys, monkeypatch, tmp
     assert "Nothing to remove" in capsys.readouterr().out
 
 
-def test_from_image_names_the_right_model_for_the_drawing(tmp_path, capsys, monkeypatch):
-    """With nothing installed, the error must point at the model that suits
-    this particular image, not at a generic list."""
+def test_from_image_without_a_model_points_at_decimer_and_the_file(tmp_path, capsys, monkeypatch):
+    """With nothing installed, the way out is the model for photos, or the
+    ChemDraw file, which needs none."""
     monkeypatch.setenv("M2I_BACKEND_HOME", str(tmp_path))
     from PIL import Image
 
@@ -247,7 +285,8 @@ def test_from_image_names_the_right_model_for_the_drawing(tmp_path, capsys, monk
 
     assert run("from-image", str(image), "-o", str(tmp_path), "--yes") == 1
     err = capsys.readouterr().err
-    assert "m2i setup molscribe" in err  # a pure-white canvas reads as clean
+    assert "m2i setup decimer" in err
+    assert "ChemDraw" in err
 
 
 def test_doctor_and_profiles_run(capsys):
@@ -263,3 +302,14 @@ def test_unknown_profile_is_a_configuration_error(tmp_path, capsys):
     code = run("from-smiles", "CCO", "-p", "nope", "-o", str(tmp_path), "--yes")
     assert code == 2
     assert "not found" in capsys.readouterr().err
+
+
+def test_batch_writes_whether_each_structure_needs_a_look(tmp_path):
+    import csv
+
+    listing = tmp_path / "list.smi"
+    listing.write_text("CCO ethanol\n", encoding="utf-8")
+    out = tmp_path / "out"
+    assert run("batch", str(listing), "-o", str(out), "--yes") == 0
+    row = next(csv.DictReader(open(out / "manifest.csv", encoding="utf-8")))
+    assert row["review"] == "not needed"  # typed, not read from a picture

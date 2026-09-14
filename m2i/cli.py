@@ -1,8 +1,11 @@
 """Command line interface.
 
-The verification step is the point of the whole program, so it is on by default
-and has to be waived explicitly with --yes. Batch mode waives it implicitly and
-records every warning in the manifest instead.
+A picture can be misread, so a reading with anything against it -- low
+confidence, stereochemistry the model wrote rather than measured, a warning --
+is shown and confirmed before anything is written (see m2i.report.review).
+A SMILES, a ChemDraw file or a molfile says exactly what it contains and is
+not asked about. --yes waives the question; batch mode waives it and writes
+the reasons into the manifest instead.
 """
 
 from __future__ import annotations
@@ -18,7 +21,7 @@ from .chem.sanitize import MoleculeParseError
 from .recognition import BackendError, describe_backends, recognize
 from .recognition.manual import STRUCTURE_FILE_SUFFIXES, ManualBackend, from_molfile
 from .recognition.registry import resolve_backends
-from .report import validate
+from .report import review, validate
 from .types import IssueLog, RecognitionResult
 from .writers import WriterError, known_programs
 
@@ -78,7 +81,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="calculate salts/counter-ions together instead of keeping the largest fragment",
     )
     common.add_argument(
-        "-y", "--yes", action="store_true", help="skip the structure verification prompt"
+        "-y", "--yes", action="store_true",
+        help="do not ask about a doubtful picture reading (the reasons are still recorded)"
     )
     common.add_argument("-v", "--verbose", action="store_true", help="show info messages too")
 
@@ -100,7 +104,7 @@ def build_parser() -> argparse.ArgumentParser:
     image_parser.add_argument(
         "--backend",
         action="append",
-        help="recognition backend; repeatable, or 'all'/'auto' (default: auto)",
+        help="recognition backend (default: the installed one)",
     )
 
     mol_parser = subparsers.add_parser(
@@ -183,13 +187,13 @@ def build_parser() -> argparse.ArgumentParser:
     batch_parser.add_argument(
         "--backend",
         action="append",
-        help="recognition backend for images; repeatable, or 'all'/'auto'",
+        help="recognition backend for images (default: the installed one)",
     )
 
     setup_parser = subparsers.add_parser(
         "setup", help="install a recognition backend into its own environment"
     )
-    setup_parser.add_argument("backend", nargs="?", help="molscribe or decimer")
+    setup_parser.add_argument("backend", nargs="?", help="decimer")
     setup_parser.add_argument(
         "--list", action="store_true", help="show what each backend is for"
     )
@@ -277,19 +281,13 @@ def cmd_from_image(args) -> int:
         if args.verbose:
             print(f"Drawing style: {style} {metrics}")
         # The manual backend cannot read an image, so it does not count here.
-        backends = [
-            b
-            for b in resolve_backends(args.backend, log, style=style)
-            if b.name != "manual"
-        ]
+        backends = resolve_backends(args.backend, log)
         if not backends:
             print(
                 "error: no vision backend is installed yet, so the structure has to "
                 "be supplied with --smiles or --molfile.\n"
-                f"       This drawing looks {style.replace('_', '-')}; install the "
-                f"model suited to it:\n"
-                f"         m2i setup {'decimer' if style == 'hand_drawn' else 'molscribe'}\n"
-                "       Run 'm2i setup --list' to see both.",
+                "       A ChemDraw file is read exactly, with no model: use from-molfile.\n"
+                "       For photos of hand-drawn structures: m2i setup decimer",
                 file=sys.stderr,
             )
             _print_issues(log, args.verbose)
@@ -523,7 +521,11 @@ def cmd_batch(args) -> int:
                     "warning_detail": " | ".join(i.message for i in log.warnings),
                 }
             )
+            decision = review.assess(molecule, log)
+            row["review"] = f"needed: {decision.summary()}" if decision.needed else "not needed"
             flag = f"({len(log.warnings)} warning(s))" if log.warnings else ""
+            if decision.needed:
+                flag += " - check it"
             print(f"  ok   {name:<28} {molecule.smiles} {flag}")
         except Exception as exc:
             failures += 1
@@ -835,8 +837,8 @@ def cmd_setup(args) -> int:
             print(backends.describe(spec))
             print(f"  state     {mark}  ({state['venv']})\n")
         print(
-            "Each one gets its own virtual environment: their dependencies are "
-            "mutually\nincompatible and none of them can share yours.\n"
+            "It gets its own virtual environment: its dependencies cannot share yours.\n"
+            "Drawings made in ChemDraw need no model: pass the .cdx or .cdxml itself.\n"
             "Install with: m2i setup <name>"
         )
         return 0
@@ -983,9 +985,19 @@ def _process_one(
         print("\nRefusing to write inputs while errors are unresolved.", file=sys.stderr)
         return 1
 
-    if not args.yes and not _confirm(molecule, options, log):
-        print("Aborted; nothing was written.")
-        return 130
+    decision = review.assess(molecule, log)
+    if not decision.needed:
+        review.record(log, decision, confirmed=None)
+    elif args.yes:
+        review.record(log, decision, confirmed=False)
+    else:
+        print("\nWorth a look before anything is written:")
+        for reason in decision.reasons:
+            print(f"  - {reason}")
+        if not _confirm(molecule, options, log):
+            print("Aborted; nothing was written.")
+            return 130
+        review.record(log, decision, confirmed=True)
 
     result = pipeline.generate_inputs(molecule, options, log)
 
@@ -1111,16 +1123,11 @@ def _image_loader(path: Path, args):
 
         image = prepare_image(path, log)
         style, _ = estimate_drawing_style(image)
-        backends = [
-            b
-            for b in resolve_backends(getattr(args, "backend", None), log, style=style)
-            if b.name != "manual"
-        ]
+        backends = resolve_backends(getattr(args, "backend", None), log)
         if not backends:
             raise BackendError(
-                f"{path.name} needs a vision backend; none is installed "
-                f"(this drawing looks {style.replace('_', '-')}: "
-                f"m2i setup {'decimer' if style == 'hand_drawn' else 'molscribe'})"
+                f"{path.name} needs a vision backend and none is installed "
+                "(m2i setup decimer), or give the ChemDraw file instead"
             )
         return recognize(path, backends, log, hand_drawn=(style == "hand_drawn"))
 
@@ -1141,6 +1148,7 @@ def _write_manifest(path: Path, rows: list[dict]) -> None:
         "files",
         "warnings",
         "warning_detail",
+        "review",
     ]
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)

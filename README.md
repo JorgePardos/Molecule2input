@@ -12,28 +12,42 @@ short_description: From a drawn molecule to a Gaussian or ORCA input
 
 # m2i — Molecule2Input
 
-From a drawn organic molecule to a quantum-chemistry input file: read the
-structure (stereochemistry included), check it, embed it in 3D, and write the
-Gaussian `.gjf` / ORCA `.inp` / `.xyz` / `.sdf`.
+From a molecule -- typed, drawn in ChemDraw, photographed from paper, or taken
+from a crystal structure -- to a quantum-chemistry input file: read the
+structure (stereochemistry included), embed it in 3D, and write the Gaussian
+`.gjf` / ORCA `.inp` / `.xyz` / `.sdf`.
 
 ```
-drawing ──▶ recognition ──▶ [ YOU CHECK IT ] ──▶ CIP + charge/spin ──▶ 3D ──▶ input file
-           (uncertain)                              (deterministic RDKit)
+SMILES, .cdx, .mol ─────────────────────────────┐
+photo ──▶ DECIMER ──▶ [ a look, if in doubt ] ──┴─▶ CIP + charge/spin ──▶ 3D ──▶ input file
+          (uncertain)                                 (deterministic RDKit)
 ```
 
-## Why there is a verification step
+## When you are asked to check the structure
 
-The recognition layer is the only statistically uncertain part of the program,
-and no single model covers both use cases: on **hand-drawn** structures the
-DECIMER family reaches ~73% exact accuracy while image-to-graph models sit
-below 11%; on **clean ChemDraw-style** depictions MolScribe and MolNexTR win,
-because they predict the molecular graph *with* 2D coordinates and wedge bonds
-and therefore derive R/S and E/Z geometrically instead of generating them as
-text.
+Only a photo can be misread. A SMILES, a ChemDraw file or a molfile says
+exactly what it contains -- ChemDraw stores the bonds and the wedges -- so
+nothing is asked about them (what m2i finds wrong is still reported, and
+errors still stop it).
 
-Everything after the recognition — CIP labelling, charge and multiplicity,
-ETKDG embedding, MMFF optimisation, file writing — is deterministic. So the
-human check sits exactly on the boundary where the errors are.
+A photo is read by DECIMER, the model for hand-drawn structures, and its
+reading is shown for confirmation whenever anything points at a mistake:
+
+- the model is less than 90% confident;
+- the molecule has any stereochemistry: DECIMER writes stereocentres and
+  double-bond geometry as text instead of measuring them off the drawing;
+- m2i warned about something while reading it (a repaired valence, a dropped
+  fragment, an undefined stereocentre).
+
+The confidence alone would not do. On 60 known molecules rendered clean and
+degraded like a photo, 113 of 120 readings were exact, and 4 of the 7 wrong
+ones came back at 93-99% confidence -- stereocentres lost, flipped or
+invented. With the three rules together, none of the 7 would have been
+accepted unseen, while 70 of the 113 right readings went through without a
+question. A rendered depiction is not a hand drawing, and real photos will be
+misread more often; the rules are meant to stay on the safe side of that.
+Accepting and confirming are both recorded in the provenance file, with the
+reasons.
 
 ## Install
 
@@ -48,31 +62,36 @@ Python), use `python -m m2i.cli` everywhere below.
 
 ## Quick start
 
-Install a recognition model (once), then point it at a drawing:
-
-```bash
-python -m m2i.cli setup molscribe
-```
-```bash
-python -m m2i.cli from-image drawing.png -o out/
-```
-
-Or skip the models entirely and give it the structure yourself:
+Give it the structure, and the input is written:
 
 ```bash
 python -m m2i.cli from-smiles "C[C@H](N)C(=O)O" -o out/
 ```
+```bash
+python -m m2i.cli from-molfile drawing.cdx -o out/
+```
 
-It prints what it understood, writes a check image, and asks for confirmation
-before writing anything:
+For photos of hand-drawn structures, install the model once and point it at
+the picture:
+
+```bash
+python -m m2i.cli setup decimer
+```
+```bash
+python -m m2i.cli from-image photo.jpg -o out/
+```
+
+When the reading is in doubt, it says why and asks before writing anything:
 
 ```
 Structure understood by m2i:
   SMILES        C[C@H](N)C(=O)O
   Formula       C3H7NO2
-  InChIKey      QNAYBMKLOCPYGJ-REOHCLBHSA-N
-  Charge/mult   0 / 1
   Stereo        C2: S
+  Source        decimer
+
+Worth a look before anything is written:
+  - its stereochemistry (C2: S) was written by the model, not measured off the drawing
 
 Check the structure: out/QNAYBMKLOCPYGJ_check.png
 Is this the molecule you drew? [y/N]
@@ -80,9 +99,11 @@ Is this the molecule you drew? [y/N]
 
 The check image shows the original next to what m2i parsed, with **atoms
 numbered exactly as in the generated input file**, CIP descriptors on every
-defined stereocentre, and undefined ones highlighted in red.
+defined stereocentre, and undefined ones highlighted in red. It is written with
+the inputs every time.
 
-Add `--yes` to skip the prompt in scripts.
+`--yes` accepts a doubtful reading without asking; the reasons are still
+recorded.
 
 ## Commands
 
@@ -96,9 +117,6 @@ python -m m2i.cli from-molfile drawing.cdxml -o out/ -p orca_opt_freq
 python -m m2i.cli from-image photo.png -o out/
 ```
 ```bash
-python -m m2i.cli from-image photo.png --backend all -o out/
-```
-```bash
 python -m m2i.cli batch structures.smi -o out/ --manifest out/manifest.csv
 ```
 ```bash
@@ -109,7 +127,8 @@ python -m m2i.cli doctor
 ```
 
 `batch` accepts a `.smi`/`.csv` list (`SMILES name` per line) or a folder of
-pictures and drawing files, and writes a manifest recording every warning.
+pictures and drawing files, and writes a manifest recording every warning and,
+for each structure, whether it needs a look and why.
 
 A ChemDraw file (`.cdxml`, `.cdx`) or a `.mol`/`.sdf` export is the most
 reliable input of all: the wedge bonds are already there, with no model in
@@ -125,12 +144,14 @@ python -m m2i.cli gui
 
 Three steps, in the order you would work:
 
-1. **Structure** — a picture (photo, scan or screenshot), a ChemDraw or
-   molfile, or a SMILES. For pictures, the model is picked from how the image
-   looks, and with both installed you can have them compare their answers.
-2. **Check** — the reading next to the original, with atom numbers and CIP
-   labels. The SMILES is editable: correcting a bad reading by hand is the
-   fastest way forward, and it works even when the reading could not be parsed.
+1. **Structure** — a photo of a hand-drawn molecule, a ChemDraw file or
+   molfile, a SMILES, or a crystal structure.
+2. **Check** — only when it is worth it. A photo reading with anything against
+   it is shown next to the original, with atom numbers and CIP labels, and the
+   Generate button waits for "This is the molecule I drew". Anything else is
+   summarised in one line, its depiction a click away. The SMILES is editable
+   either way: correcting a bad reading by hand is the fastest way forward,
+   and it works even when the reading could not be parsed.
 3. **Output** — choose Gaussian, ORCA, XYZ or SDF. Only the settings that
    program needs are shown (a recipe, method, basis, dispersion, solvent,
    cores, memory), and what you download is the file for that format.
@@ -175,8 +196,7 @@ The 3D viewer is bundled, so the page needs no network of its own.
 
 The image includes DECIMER, the model for hand-drawn structures, in its own
 environment with its weights (it is what a photo of a drawing needs, and
-nothing else reads one). MolScribe is left out: it adds 2.5 GB for clean
-depictions, and whoever has the ChemDraw file does better uploading it. The
+nothing else reads one). The
 model is loaded once per server and kept in memory, in a process of its own
 that takes the pictures in turn: loading takes most of a minute, a reading
 takes a couple of seconds after that. The loading starts when the first
@@ -333,45 +353,28 @@ SMILES for anything else. Whatever was added is listed in the run and recorded
 in the `.m2i.json`, so the file always says which atoms came from the drawing
 and which from you.
 
-## Recognition backends
+## Reading photos
 
-Neither model is installed by default, because their dependencies are mutually
-incompatible and neither can share your environment. Each gets its own
-virtual environment under `~/.m2i/backends` (override with `M2I_BACKEND_HOME`):
+Pictures are read by [DECIMER](https://github.com/Kohulan/DECIMER-Image_Transformer),
+the model for hand-drawn structures. It is not installed by default: it brings
+TensorFlow, which cannot share your environment, so it gets its own under
+`~/.m2i/backends` (override with `M2I_BACKEND_HOME`):
 
-```bash
-python -m m2i.cli setup --list
-```
 ```bash
 python -m m2i.cli setup decimer
 ```
-```bash
-python -m m2i.cli setup molscribe
-```
 
-| | MolScribe | DECIMER |
-|---|---|---|
-| approach | image → graph | image → SMILES sequence |
-| best at | clean, ChemDraw-style depictions | hand-drawn structures |
-| returns | molblock: 2D layout + wedges | a SMILES string |
-| stereochemistry | **measured** off the drawing | generated with the tokens |
-| download | ~2.5 GB | ~1.5 GB |
+It downloads about 1.5 GB, and the install is only marked ready after it has
+read a probe drawing correctly. Once loaded, the model stays in memory in a
+process of its own: loading takes most of a minute, and each picture after
+that a couple of seconds.
 
-`m2i` picks between them by looking at the image: a software export has a
-mathematically pure white background and almost no mid-tones, while a
-photographed drawing does not. The choice is always reported, never silent, and
-`--backend <name>` overrides it.
+There is no model for screenshots of ChemDraw drawings: upload the `.cdx` or
+`.cdxml` itself, which is read exactly, wedges included. (Earlier versions
+also installed MolScribe for that; a leftover environment can be deleted from
+`~/.m2i/backends/molscribe`.)
 
-With both installed, `--backend all` runs them together and compares InChIKeys:
-
-- **identical** → the strongest confidence signal m2i can give you;
-- **same skeleton, different stereochemistry** → a loud warning naming both readings;
-- **different molecules** → the higher-confidence reading is kept and flagged for review.
-
-When they disagree only on stereochemistry, the reading that came with a
-molblock wins, because a measured wedge beats a generated one.
-
-Remove a backend with `python -m m2i.cli setup <name> --remove`; nothing else
+Remove the model with `python -m m2i.cli setup decimer --remove`; nothing else
 on the system is touched.
 
 ## Profiles
@@ -434,28 +437,14 @@ out/
   ZSIAUFGUXNUGDI_c01.gjf     lowest-energy conformer
   ZSIAUFGUXNUGDI_c02.gjf
   ZSIAUFGUXNUGDI_c03.gjf
-  ZSIAUFGUXNUGDI_check.png   the verification image
+  ZSIAUFGUXNUGDI_check.png   the structure as understood, atoms numbered
   ZSIAUFGUXNUGDI.m2i.json    provenance
 ```
 
 ## Status
 
-Complete: the pipeline, the CLI, the GUI, and both vision backends.
-
-Verified on Windows 11 with the Microsoft Store build of Python 3.11.9. Both
-models install and run on CPU, and on a test depiction of
-`C[C@H](O)/C=C/c1ccc(Cl)cc1` both returned exactly that structure —
-stereocentre and double-bond geometry included, same InChIKey.
-
-Two things worth knowing if you port this elsewhere:
-
-- Upstream MolScribe pins `opencv-python==4.5.5.64`, which looks like it rules
-  out Python 3.11. It does not: that release ships an **abi3** wheel, so the
-  `cp36` tag covers every later CPython.
-- Its `albumentations` dependency pulls in both a newer NumPy and the
-  *headless* opencv distribution. Two opencv packages in one environment write
-  the same `cv2` module and whichever installs last wins, so the pins are
-  repeated in the second install step rather than stated once.
+Verified on Windows 11 with the Microsoft Store build of Python 3.11.9, DECIMER
+on CPU.
 
 ## Tests
 

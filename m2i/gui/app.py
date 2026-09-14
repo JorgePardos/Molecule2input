@@ -2,9 +2,11 @@
 
 Three steps, in the order a chemist actually works:
 
-1. **Structure** -- a picture, a ChemDraw or molfile, or a SMILES.
-2. **Check** -- the reading next to the original, editable. Nothing is
-   generated until this has been looked at.
+1. **Structure** -- a photo of a hand-drawn molecule, a ChemDraw or molfile,
+   or a SMILES.
+2. **Check** -- only when it is worth it: a picture reading with anything
+   against it is shown next to the original and must be confirmed. What was
+   typed or drawn in ChemDraw is summarised, its depiction a click away.
 3. **Output** -- choose the program. Only the settings that program needs are
    shown, and what you download is the file for that format.
 
@@ -41,7 +43,7 @@ from m2i.recognition.registry import (  # noqa: E402
     installed_vision_backends,
     resolve_backends,
 )
-from m2i.report import depict  # noqa: E402
+from m2i.report import depict, review  # noqa: E402
 from m2i.types import ERROR, INFO, WARNING, IssueLog, RecognitionResult  # noqa: E402
 
 IMAGE_TYPES = ["png", "jpg", "jpeg", "bmp", "tif", "tiff", "webp"]
@@ -133,8 +135,8 @@ def main() -> None:
     if source is None:
         if not _input_pending():
             st.info(
-                "Start with a picture of the molecule (a photo, a scan or a screenshot), "
-                "a ChemDraw or molfile, a SMILES, or a crystal structure."
+                "Start with a photo of a hand-drawn molecule, a ChemDraw file or molfile, "
+                "a SMILES, or a crystal structure."
             )
         return
 
@@ -217,7 +219,7 @@ def structure_step(kind: str) -> dict | None:
 
 def picture_input() -> None:
     upload = st.file_uploader(
-        "Picture of the molecule - hand-drawn or from ChemDraw, photo or screenshot",
+        "Photo of a hand-drawn molecule - for ChemDraw, upload the file instead",
         type=IMAGE_TYPES,
         key="picture_upload",
     )
@@ -235,8 +237,6 @@ def picture_input() -> None:
         st.error(f"That file could not be opened as a picture: {exc}")
         return
     style, _ = estimate_drawing_style(image)
-    looks = "hand-drawn" if style == "hand_drawn" else "clean, software-drawn"
-    suited = "decimer" if style == "hand_drawn" else "molscribe"
 
     installed = installed_vision_backends()
     if not installed:
@@ -248,9 +248,9 @@ def picture_input() -> None:
             )
         else:
             st.warning(
-                f"No recognition model is installed. This picture looks {looks}; the "
-                f"model suited to it is installed with `m2i setup {suited}`. Until "
-                "then, type the structure you read and the rest is automatic."
+                "No recognition model is installed: `m2i setup decimer` adds the one "
+                "for hand-drawn structures. Until then, type the structure you read, "
+                "or upload the ChemDraw file, and the rest is automatic."
             )
         typed = st.text_input("SMILES read from the picture", key="picture_smiles").strip()
         if typed:
@@ -259,17 +259,7 @@ def picture_input() -> None:
             _sources().pop(PICTURE, None)
         return
 
-    compare = False
-    if len(installed) > 1:
-        compare = st.checkbox(
-            "Run both models and compare their answers",
-            help="Slower, but when both read the same molecule (stereochemistry "
-            "included) that is the strongest confidence signal available.",
-        )
-    else:
-        st.caption(f"The picture looks {looks}; {installed[0].name} will read it.")
-
-    key = f"picture:{digest}:{'all' if compare else 'auto'}"
+    key = f"picture:{digest}"
     current = _sources().get(PICTURE)
     if current and current["key"] == key:
         return
@@ -278,11 +268,7 @@ def picture_input() -> None:
     if not st.button("Read the structure", type="primary"):
         return
     log = IssueLog(list(prep_log))
-    backends = [
-        b
-        for b in resolve_backends(["all"] if compare else None, log, style=style)
-        if b.name != "manual"
-    ]
+    backends = resolve_backends(None, log)
     with st.spinner("Reading the drawing. The first run loads the model and takes longer."):
         try:
             recognition = recognize(path, backends, log, hand_drawn=(style == "hand_drawn"))
@@ -361,9 +347,13 @@ def smiles_input() -> None:
 
 
 def check_step(source: dict, settings: dict):
-    """The verification gate. Returns (molecule, log), or (None, log)."""
-    st.subheader("2. Check the structure")
+    """The structure as understood, and a gate only when it deserves one.
 
+    A reading of a picture with anything against it is shown in full and must
+    be confirmed before an input is written. Anything else -- a SMILES, a file,
+    a confident plain reading -- is summarised in one line, its picture a
+    click away. Returns (molecule, log), or (None, log) to stop here.
+    """
     corrections = st.session_state.setdefault("corrections", {})
     corrected = corrections.get(source["key"])
     recognition = corrected or source["recognition"]
@@ -388,38 +378,66 @@ def check_step(source: dict, settings: dict):
     except Exception as exc:  # noqa: BLE001 - shown to the user, who can fix it
         error = str(exc)
 
-    left, right = st.columns(2)
-    with left:
-        if source["image"] is not None:
-            st.image(source["image"], caption="Original", width="stretch")
-        else:
-            st.caption("No picture for this structure.")
-    with right:
-        if molecule is not None:
-            png = depict.draw_molecule(molecule.mol, stereo=molecule.stereo)
-            st.image(
-                io.BytesIO(png),
-                caption="Understood by m2i - atoms numbered as in the generated input",
-                width="stretch",
+    decision = review.assess(molecule, log) if molecule is not None else None
+    gate = molecule is None or decision.needed
+    if gate:
+        st.subheader("2. Check the structure")
+        if decision is not None:
+            st.warning(
+                "Worth a look before an input is written:\n\n"
+                + "\n".join(f"- {reason}" for reason in decision.reasons)
             )
-        else:
-            st.error(f"This structure cannot be used: {error}")
+        body = st.container()
+    else:
+        st.subheader("2. Structure")
+        st.caption(f"Not checked: {decision.summary()}.")
+        body = st.expander(f"{molecule.formula} - {molecule.smiles}", expanded=False)
 
-    # Even when the reading is unusable, the way out is to correct it here.
-    _correction_field(source, corrections)
+    with body:
+        left, right = st.columns(2)
+        with left:
+            if source["image"] is not None:
+                st.image(source["image"], caption="Original", width="stretch")
+            else:
+                st.caption("No picture for this structure.")
+        with right:
+            if molecule is not None:
+                png = depict.draw_molecule(molecule.mol, stereo=molecule.stereo)
+                st.image(
+                    io.BytesIO(png),
+                    caption="Understood by m2i - atoms numbered as in the generated input",
+                    width="stretch",
+                )
+            else:
+                st.error(f"This structure cannot be used: {error}")
+
+        # Even when the reading is unusable, the way out is to correct it here.
+        _correction_field(source, corrections)
+
+        if molecule is not None:
+            columns = st.columns(4)
+            columns[0].metric("Formula", molecule.formula)
+            columns[1].metric("Charge", molecule.charge)
+            columns[2].metric("Multiplicity", molecule.multiplicity)
+            columns[3].metric("Stereocentres", len(molecule.stereo.centers))
+            st.caption(f"InChIKey {molecule.inchikey or '(unavailable)'}")
+            st.write(f"**Stereochemistry:** {molecule.stereo.describe()}")
 
     if molecule is None:
         return None, log
-
-    columns = st.columns(4)
-    columns[0].metric("Formula", molecule.formula)
-    columns[1].metric("Charge", molecule.charge)
-    columns[2].metric("Multiplicity", molecule.multiplicity)
-    columns[3].metric("Stereocentres", len(molecule.stereo.centers))
-    st.caption(f"InChIKey {molecule.inchikey or '(unavailable)'}")
-    st.write(f"**Stereochemistry:** {molecule.stereo.describe()}")
-
     _show_issues(log)
+
+    if not decision.needed:
+        review.record(log, decision, confirmed=None)
+        return molecule, log
+    # The confirmation belongs to this exact structure: a correction resets it.
+    confirmed = st.checkbox(
+        "This is the molecule I drew", key=f"confirmed:{source['key']}:{molecule.smiles}",
+    )
+    if not confirmed:
+        st.info("Confirm the structure above, or correct its SMILES, to generate an input.")
+        return None, log
+    review.record(log, decision, confirmed=True)
     return molecule, log
 
 

@@ -92,9 +92,9 @@ def test_timeout_explains_the_first_run_cost(tmp_path):
 def test_missing_interpreter_points_at_setup(tmp_path):
     with pytest.raises(BackendError) as excinfo:
         _subprocess.run_worker(
-            "molscribe", "molscribe_worker.py", {}, python=tmp_path / "nope.exe"
+            "decimer", "decimer_worker.py", {}, python=tmp_path / "nope.exe"
         )
-    assert "m2i setup molscribe" in str(excinfo.value)
+    assert "m2i setup decimer" in str(excinfo.value)
 
 
 def test_missing_worker_script_is_reported():

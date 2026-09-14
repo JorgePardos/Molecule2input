@@ -1,5 +1,6 @@
 # The browser interface as deployed (see Dockerfile): the versions the test
-# suite passed with. Recognition models are left out -- too large to host.
+# suite passed with. DECIMER goes into an environment of its own
+# (requirements-decimer.txt).
 rdkit==2026.3.4
 numpy==2.4.6
 pillow==12.3.0

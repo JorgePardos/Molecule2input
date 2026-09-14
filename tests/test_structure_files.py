@@ -38,7 +38,7 @@ def test_cdxml_keeps_the_stereochemistry_as_drawn(tmp_path, log):
 
 def test_cdxml_is_read_through_its_wedges(tmp_path, log):
     """The file becomes a molblock, so the stereochemistry is measured from the
-    drawing -- the same rule that applies to a MolScribe reading."""
+    drawing, not generated as a picture model would."""
     path = write_cdxml(tmp_path / "drawing.cdxml", depicted(TARGET))
     result = from_structure_file(path).recognize(None)
     assert result.molblock and not result.smiles

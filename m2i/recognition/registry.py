@@ -1,29 +1,22 @@
-"""Backend discovery, automatic selection and multi-backend consensus.
+"""Backend discovery and selection for reading pictures.
 
-No single OCSR model wins on both inputs: on hand-drawn structures the DECIMER
-family is far ahead, while on clean ChemDraw-style depictions the image-to-graph
-models win because they measure wedges instead of generating them. So m2i picks
-by what the image looks like, and when both are installed it can run them
-together and compare InChIKeys -- turning two unreliable readings into a
-trustworthy confidence signal.
+One vision model is supported: DECIMER, the one that reads hand-drawn
+structures. Drawings made in ChemDraw do not need a model at all -- the file
+itself holds the bonds and the wedges, and is read exactly -- so a second model
+for screenshots of them was dropped: uploading the .cdx is always better.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from rdkit import Chem
-
 from ..types import IssueLog, RecognitionResult
 from . import _subprocess
 from .base import BackendError, OCSRBackend
 from .manual import ManualBackend
 
-#: Which backend to prefer for each drawing style, best first.
-STYLE_PREFERENCE = {
-    "hand_drawn": ("decimer", "molscribe"),
-    "clean": ("molscribe", "decimer"),
-}
+#: Below this, a reading is reported as uncertain in so many words.
+LOW_CONFIDENCE = 0.7
 
 
 class SubprocessBackend:
@@ -94,34 +87,22 @@ def installed_vision_backends() -> list[OCSRBackend]:
     ]
 
 
-def resolve_backends(
-    names: list[str] | None, log: IssueLog, *, style: str | None = None
-) -> list[OCSRBackend]:
-    """Turn user-requested names into usable backend objects.
-
-    ``auto`` (the default) picks the single backend best suited to the drawing
-    style; ``all`` runs every installed one so their answers can be compared.
-    """
-    known = available_backends()
-
+def resolve_backends(names: list[str] | None, log: IssueLog) -> list[OCSRBackend]:
+    """The model to read a picture with: the installed one, or the one named."""
     if not names or names == ["auto"]:
-        return _auto_select(style, log)
-    if names == ["all"]:
-        chosen = installed_vision_backends()
-        if len(chosen) > 1:
-            log.info(
-                "backend.consensus",
-                f"Running {len(chosen)} backends and comparing their answers.",
-            )
-        return chosen
+        installed = installed_vision_backends()
+        if installed:
+            log.info("backend.auto", f"Reading the picture with {installed[0].name}.")
+        return installed[:1]
 
+    known = available_backends()
     chosen: list[OCSRBackend] = []
     for name in names:
         backend = known.get(name)
-        if backend is None:
+        if backend is None or name == "manual":
             log.warn(
                 "backend.unknown",
-                f"Unknown backend {name!r}; known: {', '.join(known)}.",
+                f"Unknown backend {name!r}; known: {', '.join(n for n in known if n != 'manual')}.",
             )
             continue
         ok, reason = backend.available()
@@ -129,30 +110,7 @@ def resolve_backends(
             log.warn("backend.unavailable", f"Backend {name!r} unavailable: {reason}")
             continue
         chosen.append(backend)
-    return chosen
-
-
-def _auto_select(style: str | None, log: IssueLog) -> list[OCSRBackend]:
-    installed = {b.name: b for b in installed_vision_backends()}
-    if not installed:
-        return []
-
-    order = STYLE_PREFERENCE.get(style or "", ())
-    for name in order:
-        if name in installed:
-            if style:
-                log.info(
-                    "backend.auto",
-                    f"The drawing looks {style.replace('_', '-')}, so {name} was "
-                    f"chosen ({installed[name].strength}). Use --backend to override, "
-                    "or --backend all to run every installed model and compare.",
-                )
-            return [installed[name]]
-
-    # No preference matched (unknown style, or only the other model installed).
-    backend = next(iter(installed.values()))
-    log.info("backend.auto", f"Using {backend.name} ({backend.strength}).")
-    return [backend]
+    return chosen[:1]
 
 
 def recognize(
@@ -161,36 +119,32 @@ def recognize(
     log: IssueLog,
     **options,
 ) -> RecognitionResult:
-    """Run the backends and reconcile their answers."""
+    """Read the picture, and say how much the reading can be trusted."""
     if not backends:
         raise BackendError(
             "no recognition backend available. Supply the structure yourself with "
-            "--smiles/--molfile, or install one with `m2i setup decimer` "
-            "(hand-drawn) or `m2i setup molscribe` (ChemDraw-style)."
+            "--smiles or --molfile (a ChemDraw file is read exactly), or install the "
+            "model for hand-drawn structures with `m2i setup decimer`."
         )
-
-    results: list[RecognitionResult] = []
+    failures = []
     for backend in backends:
         try:
-            results.append(backend.recognize(image_path, **options))
-        except Exception as exc:
-            log.warn("backend.failed", f"Backend {backend.name} failed: {exc}")
-
-    if not results:
-        raise BackendError("every recognition backend failed; see the warnings above")
-    if len(results) == 1:
-        _report_single(results[0], log)
-        return results[0]
-    return _reconcile(results, log)
+            result = backend.recognize(image_path, **options)
+        except Exception as exc:  # noqa: BLE001 - reported below, with its reason
+            failures.append(f"{backend.name}: {exc}")
+            continue
+        _report(result, log)
+        return result
+    raise BackendError("the picture could not be read (" + "; ".join(failures) + ")")
 
 
-def _report_single(result: RecognitionResult, log: IssueLog) -> None:
+def _report(result: RecognitionResult, log: IssueLog) -> None:
     if result.confidence is not None:
         log.info(
             "recognition.confidence",
             f"{result.backend} reported a confidence of {result.confidence:.2f}.",
         )
-    if result.confidence is not None and result.confidence < 0.7:
+    if result.confidence is not None and result.confidence < LOW_CONFIDENCE:
         log.warn(
             "recognition.low_confidence",
             f"{result.backend} is not confident about this reading "
@@ -203,52 +157,3 @@ def _report_single(result: RecognitionResult, log: IssueLog) -> None:
             "generated rather than measured off the drawing. The stereocentres "
             "deserve a closer look than the connectivity.",
         )
-
-
-def _reconcile(results: list[RecognitionResult], log: IssueLog) -> RecognitionResult:
-    keys = {r.backend: _inchikey(r) for r in results}
-    full = {k for k in keys.values() if k}
-    skeletons = {k.split("-")[0] for k in full}
-
-    if len(full) == 1:
-        log.info(
-            "consensus.agree",
-            f"{len(results)} backends agree on the full structure, stereochemistry "
-            "included. That is the strongest signal m2i can give you.",
-        )
-    elif len(skeletons) == 1:
-        detail = "; ".join(f"{b}: {k}" for b, k in keys.items())
-        log.warn(
-            "consensus.stereo_disagreement",
-            "The backends agree on the connectivity but disagree on the "
-            f"stereochemistry ({detail}). Check every wedge before trusting the "
-            "generated input.",
-        )
-    else:
-        detail = "; ".join(f"{r.backend}: {r.smiles}" for r in results)
-        log.warn(
-            "consensus.disagreement",
-            f"The backends read different molecules ({detail}). The reading with "
-            "the highest confidence was kept, but this drawing needs manual review.",
-        )
-
-    chosen = max(results, key=_ranking)
-    log.info("consensus.chosen", f"Kept the reading from {chosen.backend}.")
-    return chosen
-
-
-def _ranking(result: RecognitionResult) -> tuple[int, float]:
-    # A molblock beats a bare SMILES: measured stereochemistry beats generated.
-    return (1 if result.molblock else 0, result.confidence or 0.0)
-
-
-def _inchikey(result: RecognitionResult) -> str:
-    try:
-        mol = (
-            Chem.MolFromMolBlock(result.molblock)
-            if result.molblock
-            else Chem.MolFromSmiles(result.smiles)
-        )
-        return Chem.MolToInchiKey(mol) if mol else ""
-    except Exception:
-        return ""

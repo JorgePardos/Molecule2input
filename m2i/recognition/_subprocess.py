@@ -1,9 +1,8 @@
 """Bridge to a recognition model living in its own virtual environment.
 
-The vision backends cannot share an environment with m2i or with each other:
-MolScribe pins ``numpy<2``, DECIMER pulls in TensorFlow, and m2i itself runs on
-a current RDKit and NumPy 2.x. Each backend therefore gets its own venv and is
-driven as a subprocess.
+A vision backend cannot share an environment with m2i: DECIMER pulls in
+TensorFlow and its own pins, while m2i runs on a current RDKit and NumPy. Each
+backend therefore gets its own venv and is driven as a subprocess.
 
 The protocol deliberately does **not** use stdout for the payload. These models
 print progress bars, TensorFlow banners and CUDA warnings; anything sharing the

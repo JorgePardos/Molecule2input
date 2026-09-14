@@ -22,31 +22,16 @@ def isolated_backend_home(monkeypatch, tmp_path):
 
 
 def test_every_spec_is_complete():
-    assert set(backends.SPECS) == {"molscribe", "decimer"}
+    assert set(backends.SPECS) == {"decimer"}
     for spec in backends.SPECS.values():
         assert spec.install_steps and all(spec.install_steps)
         assert spec.download_size and spec.strength and spec.description
         assert backends.worker_exists(spec), f"{spec.name} has no worker script"
 
 
-def test_exactly_one_backend_returns_a_molblock():
-    """The asymmetry is the point: one measures stereochemistry, one writes it."""
-    graph = [s for s in backends.SPECS.values() if s.returns_molblock]
-    sequence = [s for s in backends.SPECS.values() if not s.returns_molblock]
-    assert [s.name for s in graph] == ["molscribe"]
-    assert [s.name for s in sequence] == ["decimer"]
-
-
-def test_molscribe_pins_are_repeated_in_every_step():
-    """albumentations pulls a newer NumPy and the headless opencv; if the pins
-    are not repeated, the second step silently undoes the first."""
-    steps = backends.SPECS["molscribe"].install_steps
-    numpy_steps = [s for s in steps if any(p.startswith("numpy") for p in s)]
-    assert len(numpy_steps) >= 2
-
-    opencv_step = next(s for s in steps if any("albumentations" in p for p in s))
-    assert any(p.startswith("opencv-python==") for p in opencv_step)
-    assert any(p.startswith("opencv-python-headless==") for p in opencv_step)
+def test_decimer_writes_its_stereochemistry_rather_than_measuring_it():
+    """So its readings are never trusted on the stereocentres without a look."""
+    assert backends.SPECS["decimer"].returns_molblock is False
 
 
 def test_status_of_a_backend_that_is_not_installed():
@@ -74,7 +59,7 @@ def test_status_needs_the_marker_not_just_the_venv(isolated_backend_home):
 def test_installing_an_unknown_backend_is_refused():
     with pytest.raises(backends.SetupError) as excinfo:
         backends.install("nonesuch")
-    assert "molscribe" in str(excinfo.value)
+    assert "decimer" in str(excinfo.value)
 
 
 def test_removing_something_that_is_not_there_is_not_an_error():
@@ -82,13 +67,13 @@ def test_removing_something_that_is_not_there_is_not_an_error():
 
 
 def test_remove_deletes_only_that_backend(isolated_backend_home):
-    for name in ("decimer", "molscribe"):
+    for name in ("decimer", "something-else"):
         (isolated_backend_home / name).mkdir(parents=True)
         (isolated_backend_home / name / "file").write_text("x")
 
     assert backends.remove("decimer") is True
     assert not (isolated_backend_home / "decimer").exists()
-    assert (isolated_backend_home / "molscribe").exists()
+    assert (isolated_backend_home / "something-else").exists()
 
 
 def test_describe_tells_the_user_what_they_are_choosing():

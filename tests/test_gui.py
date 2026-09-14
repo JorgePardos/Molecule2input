@@ -58,7 +58,7 @@ def no_exceptions(at):
 
 def test_the_app_opens_with_a_prompt_and_nothing_else(app):
     no_exceptions(app)
-    assert any("Start with a picture" in i.value for i in app.info)
+    assert any("Start with a photo" in i.value for i in app.info)
     assert not app.metric
 
 
