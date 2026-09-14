@@ -20,6 +20,7 @@ from m2i.chem import metals
 from m2i.crystal import CrystalError, read_cif
 from m2i.crystal import jobs as crystal_jobs
 from m2i.crystal.coordination import analyse
+from m2i.gui.hosting import HOSTED
 from m2i.types import WARNING, IssueLog
 
 #: A CIF has no bond orders, so an SDF would be a list of atoms pretending to
@@ -371,7 +372,8 @@ def multiplicity(column, species, charge, oxidation, is_metal, scope):
 def show_result(stored: dict, fmt: str, earlier: list) -> None:
     files = [Path(p) for p in stored["files"]]
     inputs = [p for p in files if not p.name.endswith(".m2i.json")]
-    st.success(f"{FORMATS[fmt]} ready. A copy is in {inputs[0].parent}.")
+    where = "" if HOSTED else f" A copy is in {inputs[0].parent}."
+    st.success(f"{FORMATS[fmt]} ready.{where}")
     seen = {(i.code, i.message) for i in earlier}
     for issue in stored["issues"]:
         if issue.level == WARNING and (issue.code, issue.message) not in seen:

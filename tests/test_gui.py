@@ -209,3 +209,19 @@ def test_the_crystal_page_opens_and_explains_itself(app):
     app.segmented_control(key="source_kind").set_value("Crystal (.cif)").run()
     no_exceptions(app)
     assert any("you will be asked" in i.value for i in app.info)
+
+
+def test_hosted_mode_hides_what_only_makes_sense_locally(tmp_path, monkeypatch):
+    """Served to other people, there is no server folder to pick and no path to show."""
+    import m2i.gui.hosting as hosting
+
+    monkeypatch.setattr(hosting, "HOSTED", True)
+    at = AppTest.from_file(str(APP), default_timeout=300).run()
+    no_exceptions(at)
+    assert "output_dir" not in [t.key for t in at.text_input]
+    enter_smiles(at, "CCO")
+    choose_format(at, "xyz")
+    generate(at)
+    no_exceptions(at)
+    assert downloads(at)
+    assert not any("A copy is in" in s.value for s in at.success)

@@ -1,0 +1,8 @@
+# The browser interface as deployed (see Dockerfile): the versions the test
+# suite passed with. Recognition models are left out -- too large to host.
+rdkit==2026.3.4
+numpy==2.4.6
+pillow==12.3.0
+pyyaml==6.0.3
+gemmi==0.7.5
+streamlit==1.60.0

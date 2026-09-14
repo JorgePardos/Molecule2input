@@ -1,3 +1,15 @@
+---
+title: m2i - Molecule to input
+emoji: ⚗️
+colorFrom: indigo
+colorTo: blue
+sdk: docker
+app_port: 7860
+pinned: false
+license: mit
+short_description: From a drawn molecule to a Gaussian or ORCA input
+---
+
 # m2i — Molecule2Input
 
 From a drawn organic molecule to a quantum-chemistry input file: read the
@@ -129,25 +141,41 @@ carries the same coordinates.
 
 ### Serving it to other people
 
+The repository is ready to run as a [Hugging Face Space](https://huggingface.co/docs/hub/spaces-sdks-docker):
+the block at the top of this README is the Space configuration, and the
+`Dockerfile` builds the image (pinned versions in `requirements-web.txt`).
+Create a Space with the Docker SDK (huggingface.co/new-space), then publish
+the last commit to it:
+
 ```bash
-pip install -e ".[gui,crystal]"
+sh deploy/push_space.sh https://huggingface.co/spaces/<user>/<space>
 ```
+
+The Space gets a snapshot of what the image needs, not this repository's
+history: Spaces refuse histories holding binary files outside Git LFS, and the
+tests and examples have no business on a public server. git asks for your
+Hugging Face username and, as the password, an access token with write
+permission.
+
+The same image runs anywhere else:
+
 ```bash
-streamlit run m2i/gui/app.py --server.port 8501 --server.headless true
+docker build -t m2i . && docker run -p 7860:7860 m2i
 ```
 
 It is a plain Streamlit app with no database and no state of its own, so one
 process serves everybody. Everything a visitor does belongs to their own
 session: the upload is stored under a name m2i chooses in a private temporary
-folder, the readings and geometries are cached there (a few at a time, so a
-long session does not grow without end), and the files are written to that
-session's folder — two people generating the same molecule cannot overwrite
-each other, and what they download is the file itself. The 3D viewer is
-bundled, so the page needs no network of its own.
+folder, readings and geometries are cached there (a few at a time), and the
+files are written to that session's folder, so two people generating the same
+molecule cannot overwrite each other. The image sets `M2I_HOSTED=1`, which
+hides what only makes sense on your own machine (a folder to save into, paths
+on the server's disk, `m2i setup` instructions). Uploads are capped at 20 MB.
+The 3D viewer is bundled, so the page needs no network of its own.
 
 The recognition models are the only heavy part, and only pictures need them:
-SMILES, ChemDraw, molfiles and CIFs work without them. Leaving them out keeps
-the image to what `pip install` brings.
+SMILES, ChemDraw, molfiles and CIFs work without them, and the hosted image
+leaves them out.
 
 ## Crystal structures (.cif)
 

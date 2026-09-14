@@ -342,8 +342,7 @@ def _fill(mol: Chem.Mol, metal: int, substituents: dict[str, str], notes: list):
                           f"{name} is {missing} bond(s) short of the usual "
                           f"{USUAL_VALENCE[symbol]}: filled with {missing} hydrogen(s). "
                           + INCOMPLETE_HINT.get(symbol, "")
-                          + f" Give the real ones with --sub {name}=... "
-                          + "(Me, iPr2, Ph2, Cy2, OMe...) or in the browser."))
+                          + " Give the real groups: Me, iPr2, Ph2, Cy2, OMe..."))
             continue
         group_names, as_chain = _interpret(spec, symbol, missing, name)
         if as_chain:
@@ -411,7 +410,7 @@ def _implicit_hydrogens(mol: Chem.Mol, donors: list[int]):
         notes.append(("info", "organometallic.implicit_hydrogens",
                       f"{atom.GetSymbol()}{donor + 1} had no substituents drawn: read as "
                       f"{atom.GetSymbol()}H{count} by the usual convention. If it carries "
-                      f"groups, give them with --sub {atom.GetSymbol()}{donor + 1}=iPr2."))
+                      "groups, give them."))
     return notes, assumed
 
 

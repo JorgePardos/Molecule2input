@@ -32,6 +32,7 @@ from rdkit import Chem  # noqa: E402
 
 from m2i import __version__, config, pipeline  # noqa: E402
 from m2i.chem.conformers import ConformerOptions  # noqa: E402
+from m2i.gui.hosting import HOSTED  # noqa: E402
 from m2i.preprocess import ImageError, estimate_drawing_style, prepare_image  # noqa: E402
 from m2i.recognition import BackendError, recognize  # noqa: E402
 from m2i.recognition.manual import STRUCTURE_FILE_SUFFIXES, from_structure_file  # noqa: E402
@@ -143,13 +144,13 @@ def sidebar() -> dict:
     )
     seed = int(st.sidebar.number_input("Random seed", value=0xF00D, step=1))
 
-    st.sidebar.header("Files")
     # A folder of this session, not one shared by everyone: served over the
     # web, two people generating the same molecule must not overwrite each
     # other. What you download is the same file either way.
-    output_dir = st.sidebar.text_input(
-        "Also save to folder", str(_workspace() / "output"), key="output_dir",
-    )
+    output_dir = str(_workspace() / "output")
+    if not HOSTED:
+        st.sidebar.header("Files")
+        output_dir = st.sidebar.text_input("Also save to folder", output_dir, key="output_dir")
 
     with st.sidebar.expander("Recognition models"):
         for row in describe_backends():
@@ -158,7 +159,7 @@ def sidebar() -> dict:
             mark = "installed" if row["available"] else "not installed"
             st.write(f"**{row['name']}** - {mark}")
             st.caption(f"Best at {row['strength']}.")
-            if not row["available"]:
+            if not row["available"] and not HOSTED:
                 st.caption(f"`m2i setup {row['name']}`")
 
     return {
@@ -211,11 +212,18 @@ def picture_input() -> None:
 
     installed = installed_vision_backends()
     if not installed:
-        st.warning(
-            f"No recognition model is installed. This picture looks {looks}; the "
-            f"model suited to it is installed with `m2i setup {suited}`. Until "
-            "then, type the structure you read and the rest is automatic."
-        )
+        if HOSTED:
+            st.warning(
+                "This server does not read pictures: the recognition models are too large "
+                "to host here. Type the structure you read, or upload the ChemDraw file, "
+                "and the rest is automatic."
+            )
+        else:
+            st.warning(
+                f"No recognition model is installed. This picture looks {looks}; the "
+                f"model suited to it is installed with `m2i setup {suited}`. Until "
+                "then, type the structure you read and the rest is automatic."
+            )
         typed = st.text_input("SMILES read from the picture", key="picture_smiles").strip()
         if typed:
             _set_source(PICTURE, f"picture:{digest}:{typed}", _manual(typed), image, prep_log)
@@ -575,10 +583,9 @@ def _show_result(stored: dict, fmt: str, check_log: IssueLog) -> None:
     inputs = [p for p in written if not p.name.endswith(("_check.png", ".m2i.json"))]
     extras = [p for p in written if p not in inputs]
 
+    where = "" if HOSTED or not inputs else f" A copy is in {inputs[0].parent}."
     st.success(
-        f"{len(inputs)} {FORMATS[fmt]} file(s) ready. A copy is in {inputs[0].parent}."
-        if inputs
-        else "Nothing was written."
+        f"{len(inputs)} {FORMATS[fmt]} file(s) ready.{where}" if inputs else "Nothing was written."
     )
 
     for conformer, path in zip(result.conformers, inputs):
