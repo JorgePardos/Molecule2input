@@ -135,3 +135,63 @@ def test_charge_override_reaches_the_input_file(tmp_path, log):
     )
     text = open(next(p for p in result.written_files if p.endswith(".gjf"))).read()
     assert "\n-1 1\n" in text
+
+
+# -- geometry computed once, written in any format -----------------------
+
+
+def test_every_format_carries_the_same_geometry(tmp_path, log):
+    """The GUI embeds once and writes whichever format is asked for; the
+    files must describe identical coordinates."""
+    from m2i import config
+    from m2i.chem.conformers import ConformerOptions
+
+    molecule = pipeline.prepare_molecule(
+        RecognitionResult(smiles="C[C@H](O)/C=C/c1ccc(Cl)cc1", backend="manual"), log
+    )
+    embedding = pipeline.embed(molecule, ConformerOptions(keep=1), log)
+
+    written = {}
+    for program in ("gaussian", "orca", "xyz"):
+        profile = config.JobProfile(program=program, method="b3lyp", basis="def2-SVP")
+        options = pipeline.PipelineOptions(
+            profile=profile,
+            output_dir=tmp_path / program,
+            write_comparison=False,
+            write_provenance=False,
+        )
+        result = pipeline.write_inputs(molecule, embedding, options, log)
+        written[program] = _cartesian_block(result.written_files[0])
+
+    assert written["gaussian"] == written["orca"] == written["xyz"]
+    assert len(written["xyz"]) == 23
+
+
+def test_generate_inputs_is_embed_then_write(tmp_path, log):
+    from m2i import config
+
+    molecule = pipeline.prepare_molecule(
+        RecognitionResult(smiles="CCO", backend="manual"), log
+    )
+    options = pipeline.PipelineOptions(
+        profile=config.JobProfile(program="xyz", method="", basis="", jobs=()),
+        output_dir=tmp_path,
+    )
+    result = pipeline.generate_inputs(molecule, options, log)
+    assert result.conformers
+    assert any(path.endswith(".xyz") for path in result.written_files)
+
+
+def _cartesian_block(path) -> list[tuple]:
+    import re
+    from pathlib import Path
+
+    rows = []
+    for line in Path(path).read_text(encoding="utf-8").splitlines():
+        parts = line.split()
+        if len(parts) == 4 and re.fullmatch(r"[A-Z][a-z]?", parts[0]):
+            try:
+                rows.append((parts[0], *(round(float(v), 5) for v in parts[1:])))
+            except ValueError:
+                continue
+    return rows

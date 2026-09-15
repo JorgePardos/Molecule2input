@@ -29,3 +29,9 @@ out/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Local editor/agent configuration
+.claude/
+
+# Tunnel token for deploy/lab (a secret)
+deploy/lab/.env

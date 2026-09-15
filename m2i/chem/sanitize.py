@@ -7,6 +7,8 @@ determined geometrically rather than guessed by a sequence model.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from rdkit import Chem, RDLogger
 from rdkit.Chem import rdMolDescriptors
 
@@ -44,6 +46,11 @@ def mol_from_molblock(molblock: str) -> Chem.Mol:
 
 def mol_from_recognition(result: RecognitionResult, log: IssueLog) -> Chem.Mol:
     """Build a molecule from a recognition result, molblock first."""
+    # Whatever produced the result may have had to interpret the input -- a
+    # ChemDraw reader resolving delocalised bonds, say. It reports that here.
+    for level, code, message in (result.raw or {}).get("notes", ()):
+        log.add(level, code, message)
+
     if result.molblock:
         try:
             mol = mol_from_molblock(result.molblock)
@@ -115,7 +122,11 @@ def split_fragments(
         log.warn(
             "fragments.kept",
             f"{len(frags)} disconnected fragments kept as a single system: "
-            f"{', '.join(smiles)}. Charge and multiplicity apply to the whole set.",
+            f"{', '.join(smiles)}. Charge and multiplicity apply to the whole set. "
+            "Their placement relative to each other in 3D is arbitrary: a 2D "
+            "drawing says nothing about it. For a cluster model of an active "
+            "site, the coordinates have to come from the crystal structure or an "
+            "MD frame.",
         )
         return mol
 
@@ -179,3 +190,103 @@ def _diagnose_smiles(smiles: str) -> str:
         return f"invalid SMILES syntax: {smiles!r}"
     described = _describe_problems(raw)
     return f"SMILES parsed but is chemically invalid: {described or smiles!r}"
+
+
+# -- bonds drawn as delocalised ------------------------------------------
+
+#: Terminal atoms that carry the charge of a delocalised anion.
+_CHALCOGENS = {8, 16, 34}  # O, S, Se
+
+
+@dataclass
+class DelocalisedGroup:
+    """One group whose bonds were drawn as delocalised (bond order 1.5)."""
+
+    central: int
+    added_charge: int
+
+
+def resolve_delocalised_bonds(mol: Chem.RWMol) -> list[DelocalisedGroup]:
+    """Rewrite bonds drawn as delocalised outside a ring as a Lewis structure.
+
+    Mechanism drawings often show a carboxylate or a guanidinium with two
+    dashed, "one and a half" bonds. ChemDraw stores those as order 1.5, which
+    RDKit reads as aromatic -- and an aromatic bond outside a ring has no valid
+    Lewis structure, so the molecule fails sanitisation and, left alone, would
+    simply vanish from the page.
+
+    Each group gets one double bond: to a terminal atom drawn with a positive
+    charge if there is one (the =NH2+ of a guanidinium), otherwise to a
+    terminal chalcogen. A terminal O/S left singly bonded, with no hydrogen and
+    no charge drawn, can only be the anion -- a delocalised drawing of a
+    carboxylic acid would make no sense -- so it becomes O-. That changes the
+    net charge, which is why every such group is returned for reporting.
+    """
+    mol.UpdatePropertyCache(strict=False)
+    Chem.FastFindRings(mol)
+    bonds = [
+        b
+        for b in mol.GetBonds()
+        if b.GetBondType() == Chem.BondType.AROMATIC and not b.IsInRing()
+    ]
+    groups: list[DelocalisedGroup] = []
+    for group in _connected_bonds(bonds):
+        degree: dict[int, int] = {}
+        for bond in group:
+            for idx in (bond.GetBeginAtomIdx(), bond.GetEndAtomIdx()):
+                degree[idx] = degree.get(idx, 0) + 1
+            bond.SetBondType(Chem.BondType.SINGLE)
+            bond.SetIsAromatic(False)
+        for idx in degree:
+            atom = mol.GetAtomWithIdx(idx)
+            if not any(b.GetIsAromatic() for b in atom.GetBonds()):
+                atom.SetIsAromatic(False)
+
+        central = max(degree, key=lambda idx: (degree[idx], -idx))
+        centre = mol.GetAtomWithIdx(central)
+        spokes = [b for b in group if central in (b.GetBeginAtomIdx(), b.GetEndAtomIdx())]
+
+        def preference(bond, centre=centre):
+            other = bond.GetOtherAtom(centre)
+            return (other.GetFormalCharge() > 0, other.GetAtomicNum() in _CHALCOGENS)
+
+        double = max(spokes, key=preference)
+        double.SetBondType(Chem.BondType.DOUBLE)
+
+        added = 0
+        for bond in spokes:
+            if bond is double:
+                continue
+            other = bond.GetOtherAtom(centre)
+            if (
+                other.GetAtomicNum() in _CHALCOGENS
+                and other.GetDegree() == 1
+                and other.GetFormalCharge() == 0
+                and other.GetNumExplicitHs() == 0
+            ):
+                other.SetFormalCharge(-1)
+                other.SetNoImplicit(True)
+                added -= 1
+        groups.append(DelocalisedGroup(central=central, added_charge=added))
+    return groups
+
+
+def _connected_bonds(bonds: list) -> list[list]:
+    """Split bonds into groups that share atoms."""
+    remaining = list(bonds)
+    groups = []
+    while remaining:
+        group = [remaining.pop()]
+        atoms = {group[0].GetBeginAtomIdx(), group[0].GetEndAtomIdx()}
+        grew = True
+        while grew:
+            grew = False
+            for bond in list(remaining):
+                ends = {bond.GetBeginAtomIdx(), bond.GetEndAtomIdx()}
+                if ends & atoms:
+                    group.append(bond)
+                    atoms |= ends
+                    remaining.remove(bond)
+                    grew = True
+        groups.append(group)
+    return groups

@@ -1,0 +1,64 @@
+<!doctype html>
+<!--
+  m2i 3D viewer: a minimal Streamlit component around 3Dmol.js.
+
+  3Dmol.js is bundled next to this file (BSD-3-Clause, see LICENSE-3Dmol.txt)
+  so the viewer works offline; Streamlit serves this folder once and the
+  browser caches it. The scene is rebuilt only when the molecule changes, so
+  touching any other control does not reset the user's rotation.
+-->
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    html, body { margin: 0; padding: 0; background: #fff; overflow: hidden; }
+    #view { width: 100%; position: relative; }
+    #fallback { font: 13px sans-serif; color: #555; padding: 1em; }
+  </style>
+  <script src="3Dmol-min.js"></script>
+</head>
+<body>
+  <div id="view"></div>
+  <script>
+    function send(type, data) {
+      window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type: type }, data || {}), "*");
+    }
+
+    let viewer = null;
+    let shown = null;
+
+    window.addEventListener("message", function (event) {
+      if (!event.data || event.data.type !== "streamlit:render") return;
+      const args = event.data.args || {};
+      const height = args.height || 380;
+      const element = document.getElementById("view");
+      element.style.height = height + "px";
+
+      if (typeof $3Dmol === "undefined") {
+        element.innerHTML = '<div id="fallback">3Dmol.js could not be loaded.</div>';
+        send("streamlit:setFrameHeight", { height: height });
+        return;
+      }
+      if (!viewer) viewer = $3Dmol.createViewer(element, { backgroundColor: "white" });
+
+      if (args.xyz !== shown) {
+        viewer.clear();
+        viewer.addModel(args.xyz, "xyz");
+        viewer.setStyle({}, { stick: { radius: 0.14 }, sphere: { scale: 0.22 } });
+        (args.labels || []).forEach(function (label) {
+          viewer.addLabel(label.text, {
+            position: { x: label.x, y: label.y, z: label.z },
+            fontSize: 12, backgroundOpacity: 0.6,
+          });
+        });
+        viewer.zoomTo();
+        shown = args.xyz;
+      }
+      viewer.render();
+      send("streamlit:setFrameHeight", { height: height });
+    });
+
+    send("streamlit:componentReady", { apiVersion: 1 });
+  </script>
+</body>
+</html>

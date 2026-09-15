@@ -1,0 +1,7 @@
+# DECIMER's own environment in the deployed image (see Dockerfile), applied as
+# pip constraints to `m2i setup decimer`: the versions that read hand-drawn
+# structures correctly when this was set up. Its venv is separate from m2i's.
+decimer==2.8.0
+tensorflow==2.20.0
+keras==3.15.1
+opencv-python==5.0.0.93

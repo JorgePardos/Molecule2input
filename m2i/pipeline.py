@@ -89,22 +89,45 @@ def prepare_molecule(
 # -- second half: geometry and files -------------------------------------
 
 
-def generate_inputs(
-    molecule: MoleculeSpec, options: PipelineOptions, log: IssueLog
-) -> PipelineResult:
-    """Molecule -> 3D conformers -> input files on disk."""
-    result = PipelineResult(molecule=molecule, issues=log, profile=options.profile)
+@dataclass
+class Embedding:
+    """The 3D half of the work, kept apart from any output format.
 
+    Embedding and force-field minimisation are the slow part; writing a file
+    is not. Keeping them separate lets an interface produce the same geometry
+    as Gaussian, then ORCA, then XYZ, without re-embedding each time -- and
+    guarantees the files describe identical coordinates.
+    """
+
+    mol_h: Chem.Mol
+    conformers: list[Conformer]
+
+
+def embed(
+    molecule: MoleculeSpec, conformer_options: conf_mod.ConformerOptions, log: IssueLog
+) -> Embedding:
+    """Molecule -> stereo-checked, energy-ranked 3D conformers."""
     mol_h, conformers = conf_mod.generate(
-        molecule.mol, log, molecule.stereo, options.conformers
+        molecule.mol, log, molecule.stereo, conformer_options
     )
-    result.conformers = conformers
+    return Embedding(mol_h=mol_h, conformers=conformers)
+
+
+def write_inputs(
+    molecule: MoleculeSpec,
+    embedding: Embedding,
+    options: PipelineOptions,
+    log: IssueLog,
+) -> PipelineResult:
+    """Conformers already in hand -> input files for ``options.profile.program``."""
+    result = PipelineResult(molecule=molecule, issues=log, profile=options.profile)
+    result.conformers = embedding.conformers
 
     output_dir = Path(options.output_dir)
     writer = get_writer(options.profile.program)
-    multiple = len(conformers) > 1
+    multiple = len(embedding.conformers) > 1
 
-    for conformer in conformers:
+    for conformer in embedding.conformers:
         stem = molecule.name + (f"_c{conformer.index + 1:02d}" if multiple else "")
         job = JobSpec(
             name=stem,
@@ -122,7 +145,7 @@ def generate_inputs(
                 "energy": conformer.energy,
                 "force_field": conformer.force_field,
             },
-            mol=_single_conformer_mol(mol_h, conformer.index),
+            mol=_single_conformer_mol(embedding.mol_h, conformer.index),
         )
         path = writer.write(job, output_dir / stem, log)
         result.written_files.append(str(path))
@@ -148,6 +171,14 @@ def generate_inputs(
         result.written_files.append(str(path))
 
     return result
+
+
+def generate_inputs(
+    molecule: MoleculeSpec, options: PipelineOptions, log: IssueLog
+) -> PipelineResult:
+    """Molecule -> 3D conformers -> input files on disk."""
+    embedding = embed(molecule, options.conformers, log)
+    return write_inputs(molecule, embedding, options, log)
 
 
 def run(

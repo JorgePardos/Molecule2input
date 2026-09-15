@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "molecule2input"
-version = "0.1.0"
+version = "0.2.0"
 description = "From a drawn molecule to a quantum-chemistry input file"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -17,8 +17,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+web = ["fastapi>=0.110", "uvicorn[standard]>=0.29", "python-multipart>=0.0.9", "itsdangerous>=2.1"]
 gui = ["streamlit>=1.30"]
-dev = ["pytest>=7"]
+crystal = ["gemmi>=0.6"]
+dev = ["pytest>=7", "httpx>=0.27"]
 
 [project.scripts]
 m2i = "m2i.cli:main"
@@ -27,7 +29,7 @@ m2i = "m2i.cli:main"
 include = ["m2i*"]
 
 [tool.setuptools.package-data]
-m2i = ["profiles/*.yaml"]
+m2i = ["profiles/*.yaml", "gui/viewer/*", "web/static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,0 +1,11 @@
+name: gaussian_opt_freq_def2svp
+description: Opt + freq, B3LYP-D3(BJ)/def2-SVP on an ultrafine grid. def2 covers first-row metals all-electron and adds ECPs beyond Kr.
+program: gaussian
+method: b3lyp
+basis: def2svp
+dispersion: gd3bj
+jobs: [opt=maxcycle=200, freq=noraman]
+extra_keywords: [int=grid=ultrafine]
+resources:
+  mem: 200MW
+  nproc: 8

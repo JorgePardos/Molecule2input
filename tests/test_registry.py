@@ -1,4 +1,4 @@
-"""Backend selection and multi-backend consensus, with stand-in backends."""
+"""Backend selection and reporting, with stand-in backends."""
 
 from __future__ import annotations
 
@@ -7,11 +7,9 @@ from conftest import codes
 
 from m2i.recognition import registry
 from m2i.recognition.base import BackendError
-from m2i.types import IssueLog, RecognitionResult
+from m2i.types import RecognitionResult
 
-# Two readings of the same skeleton that differ only in the stereocentre.
 S_ENANTIOMER = "F[C@@H](Cl)Br"
-R_ENANTIOMER = "F[C@H](Cl)Br"
 
 
 class FakeBackend:
@@ -44,72 +42,20 @@ def molblock_for(smiles: str) -> str:
     return Chem.MolToMolBlock(mol)
 
 
-# -- consensus -----------------------------------------------------------
+# -- reading ---------------------------------------------------------------------
 
 
-def test_full_agreement_is_the_strongest_signal(log):
-    backends = [
-        FakeBackend("a", S_ENANTIOMER, confidence=0.8),
-        FakeBackend("b", S_ENANTIOMER, confidence=0.7),
-    ]
-    result = registry.recognize(None, backends, log)
-    assert result.smiles == S_ENANTIOMER
-    assert "consensus.agree" in codes(log)
-    assert not log.warnings
-
-
-def test_same_skeleton_different_stereochemistry_warns(log):
-    backends = [
-        FakeBackend("a", S_ENANTIOMER, confidence=0.9),
-        FakeBackend("b", R_ENANTIOMER, confidence=0.5),
-    ]
-    registry.recognize(None, backends, log)
-    assert "consensus.stereo_disagreement" in codes(log)
-    message = next(i for i in log if i.code == "consensus.stereo_disagreement").message
-    assert "wedge" in message
-
-
-def test_different_molecules_warn_loudly(log):
-    backends = [
-        FakeBackend("a", "CCO", confidence=0.9),
-        FakeBackend("b", "c1ccccc1", confidence=0.4),
-    ]
-    registry.recognize(None, backends, log)
-    assert "consensus.disagreement" in codes(log)
-
-
-def test_a_molblock_beats_a_more_confident_smiles(log):
-    """Measured stereochemistry beats generated stereochemistry."""
-    graph = FakeBackend("graph", S_ENANTIOMER, molblock=molblock_for(S_ENANTIOMER), confidence=0.5)
-    sequence = FakeBackend("sequence", R_ENANTIOMER, confidence=0.99)
-    result = registry.recognize(None, [graph, sequence], log)
-    assert result.backend == "graph"
-
-
-def test_highest_confidence_wins_among_equals(log):
-    weak = FakeBackend("weak", "CCO", confidence=0.3)
-    strong = FakeBackend("strong", "c1ccccc1", confidence=0.95)
-    assert registry.recognize(None, [weak, strong], log).backend == "strong"
-
-
-def test_a_failing_backend_does_not_sink_the_run(log):
-    backends = [FakeBackend("broken", "", fails=True), FakeBackend("ok", "CCO")]
-    assert registry.recognize(None, backends, log).smiles == "CCO"
-    assert "backend.failed" in codes(log)
-
-
-def test_all_backends_failing_is_an_error(log):
-    with pytest.raises(BackendError):
+def test_a_failing_backend_is_an_error_with_its_reason(log):
+    with pytest.raises(BackendError, match="model exploded"):
         registry.recognize(None, [FakeBackend("broken", "", fails=True)], log)
 
 
 def test_no_backend_at_all_explains_how_to_get_one(log):
     with pytest.raises(BackendError) as excinfo:
         registry.recognize(None, [], log)
-    assert "m2i setup" in str(excinfo.value)
-
-
-# -- single-backend reporting -------------------------------------------
+    message = str(excinfo.value)
+    assert "m2i setup decimer" in message
+    assert "ChemDraw" in message  # the file needs no model
 
 
 def test_low_confidence_is_surfaced(log):
@@ -128,56 +74,35 @@ def test_sequence_model_gets_a_stereochemistry_caveat(log):
     assert "measured" in message
 
 
-def test_graph_model_gets_no_caveat(log):
+def test_a_molblock_gets_no_caveat(log):
     backend = FakeBackend("a", S_ENANTIOMER, molblock=molblock_for(S_ENANTIOMER), confidence=0.9)
     registry.recognize(None, [backend], log)
     assert "recognition.sequence_model" not in codes(log)
 
 
-# -- selection -----------------------------------------------------------
+# -- selection -----------------------------------------------------------------------
 
 
-def install_fakes(monkeypatch, *names):
-    fakes = {n: FakeBackend(n, "CCO") for n in names}
-    monkeypatch.setattr(registry, "installed_vision_backends", lambda: list(fakes.values()))
-    return fakes
-
-
-def test_hand_drawn_images_prefer_decimer(monkeypatch, log):
-    install_fakes(monkeypatch, "molscribe", "decimer")
-    chosen = registry.resolve_backends(None, log, style="hand_drawn")
-    assert [b.name for b in chosen] == ["decimer"]
+def test_the_installed_model_is_used(monkeypatch, log):
+    fake = FakeBackend("decimer", "CCO")
+    monkeypatch.setattr(registry, "installed_vision_backends", lambda: [fake])
+    assert registry.resolve_backends(None, log) == [fake]
     assert "backend.auto" in codes(log)
-
-
-def test_clean_images_prefer_molscribe(monkeypatch, log):
-    install_fakes(monkeypatch, "molscribe", "decimer")
-    assert [b.name for b in registry.resolve_backends(None, log, style="clean")] == [
-        "molscribe"
-    ]
-
-
-def test_the_preferred_backend_falls_back_to_what_is_installed(monkeypatch, log):
-    install_fakes(monkeypatch, "molscribe")
-    assert [b.name for b in registry.resolve_backends(None, log, style="hand_drawn")] == [
-        "molscribe"
-    ]
-
-
-def test_all_runs_every_installed_backend(monkeypatch, log):
-    install_fakes(monkeypatch, "molscribe", "decimer")
-    chosen = registry.resolve_backends(["all"], log)
-    assert len(chosen) == 2
-    assert "backend.consensus" in codes(log)
 
 
 def test_nothing_installed_selects_nothing(monkeypatch, log):
     monkeypatch.setattr(registry, "installed_vision_backends", list)
-    assert registry.resolve_backends(None, log, style="clean") == []
+    assert registry.resolve_backends(None, log) == []
 
 
 def test_an_unknown_backend_name_is_reported(log):
     assert registry.resolve_backends(["nonesuch"], log) == []
+    assert "backend.unknown" in codes(log)
+
+
+def test_screenshots_of_chemdraw_have_no_model_of_their_own(log):
+    """MolScribe was dropped: the ChemDraw file is read exactly instead."""
+    assert registry.resolve_backends(["molscribe"], log) == []
     assert "backend.unknown" in codes(log)
 
 
@@ -190,4 +115,4 @@ def test_an_uninstalled_backend_name_says_how_to_install_it(log):
 def test_manual_is_always_available():
     rows = {row["name"]: row for row in registry.describe_backends()}
     assert rows["manual"]["available"]
-    assert set(rows) == {"manual", "molscribe", "decimer"}
+    assert set(rows) == {"manual", "decimer"}

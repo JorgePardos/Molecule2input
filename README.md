@@ -1,233 +1,189 @@
+---
+title: m2i - Molecule to input
+emoji: ⚗️
+colorFrom: indigo
+colorTo: blue
+sdk: docker
+app_port: 7860
+pinned: false
+license: mit
+short_description: From a drawn molecule to a Gaussian or ORCA input
+---
+
 # m2i — Molecule2Input
 
-From a drawn organic molecule to a quantum-chemistry input file: read the
-structure (stereochemistry included), check it, embed it in 3D, and write the
-Gaussian `.gjf` / ORCA `.inp` / `.xyz` / `.sdf`.
+From a molecule — typed, drawn in ChemDraw, photographed from paper, or taken
+from a crystal structure — to the input file of a quantum-chemistry
+calculation. m2i works out the connectivity, stereochemistry, charge and spin,
+builds a 3D geometry that keeps the stereochemistry, and writes a Gaussian
+`.gjf`, ORCA `.inp`, `.xyz` or `.sdf`, with a record of everything it did.
 
 ```
-drawing ──▶ recognition ──▶ [ YOU CHECK IT ] ──▶ CIP + charge/spin ──▶ 3D ──▶ input file
-           (uncertain)                              (deterministic RDKit)
+SMILES, .cdx, .mol ─────────────────────────────┐
+photo ──▶ DECIMER ──▶ [ a look, if in doubt ] ──┴─▶ CIP + charge/spin ──▶ 3D ──▶ input file
+.cif ──▶ rebuilt from the crystal ──▶ [ species, hydrogens, spin ] ──────────────▶ input file
 ```
 
-## Why there is a verification step
+**Documentation:** [user manual](https://github.com/JorgePardos/Molecule2input/blob/main/docs/MANUAL.md) ·
+[what changed in 0.2.0](https://github.com/JorgePardos/Molecule2input/blob/main/CHANGELOG.md)
 
-The recognition layer is the only statistically uncertain part of the program,
-and no single model covers both use cases: on **hand-drawn** structures the
-DECIMER family reaches ~73% exact accuracy while image-to-graph models sit
-below 11%; on **clean ChemDraw-style** depictions MolScribe and MolNexTR win,
-because they predict the molecular graph *with* 2D coordinates and wedge bonds
-and therefore derive R/S and E/Z geometrically instead of generating them as
-text.
+## What it reads
 
-Everything after the recognition — CIP labelling, charge and multiplicity,
-ETKDG embedding, MMFF optimisation, file writing — is deterministic. So the
-human check sits exactly on the boundary where the errors are.
+| Input | How it is read | You are asked |
+|---|---|---|
+| **SMILES** | Exactly | Nothing |
+| **ChemDraw** (`.cdx`, `.cdxml`) or **molfile** (`.mol`, `.sdf`) | Exactly, wedges included | Nothing |
+| **Metal complex** drawn in ChemDraw | Bonds to the metal read as chemists draw them; every isomer listed, best fit to the drawing first; built in 3D and verified | The substituents the drawing leaves out, the isomer if the drawing does not decide, oxidation state, charge and spin |
+| **Photo** of a hand-drawn molecule | DECIMER, a model for hand-drawn structures | To confirm the reading — only when it is in doubt |
+| **Crystal structure** (`.cif`) | Rebuilt with its measured geometry; missing hydrogens put back; coordination and chirality at the metal reported | The species, doubtful hydrogens, oxidation state, charge and spin |
+
+If you have the ChemDraw file, use it rather than a picture of it: the file
+holds the bonds, wedges and labels exactly.
+
+## When it asks you to check the structure
+
+Only a photo can be misread. A reading is shown for confirmation when the
+model is less than 90% confident, when the molecule has any stereochemistry
+(DECIMER writes it as text instead of measuring it off the drawing), or when
+anything looked wrong while reading it. Everything else goes straight through.
+
+The rules were set by measurement, not guessed: on 120 DECIMER readings of
+known molecules, 4 of the 7 wrong ones came back at 93–99% confidence, so the
+confidence alone would have let them through; with the three rules together,
+none of the 7 would have been accepted unseen. Accepting and confirming are
+both recorded, with the reasons. Details in the
+[manual](https://github.com/JorgePardos/Molecule2input/blob/main/docs/MANUAL.md#4-photos-of-hand-drawn-molecules).
 
 ## Install
 
-RDKit, NumPy, Pillow and PyYAML are the only requirements for the core.
+Python 3.10 or newer.
 
 ```bash
-pip install -e ".[gui,dev]"
+pip install -e ".[gui,crystal]"
 ```
 
-If `m2i` does not end up on your PATH (common with the Microsoft Store build of
-Python), use `python -m m2i.cli` everywhere below.
+For photos, add the model once (about 1.5 GB, in an environment of its own):
+
+```bash
+m2i setup decimer
+```
+
+On Windows, if `m2i` is not found, use `python -m m2i.cli` instead.
 
 ## Quick start
 
-Install a recognition model (once), then point it at a drawing:
-
 ```bash
-python -m m2i.cli setup molscribe
+m2i from-smiles "C[C@H](N)C(=O)O" -o out/
 ```
 ```bash
-python -m m2i.cli from-image drawing.png -o out/
-```
-
-Or skip the models entirely and give it the structure yourself:
-
-```bash
-python -m m2i.cli from-smiles "C[C@H](N)C(=O)O" -o out/
-```
-
-It prints what it understood, writes a check image, and asks for confirmation
-before writing anything:
-
-```
-Structure understood by m2i:
-  SMILES        C[C@H](N)C(=O)O
-  Formula       C3H7NO2
-  InChIKey      QNAYBMKLOCPYGJ-REOHCLBHSA-N
-  Charge/mult   0 / 1
-  Stereo        C2: S
-
-Check the structure: out/QNAYBMKLOCPYGJ_check.png
-Is this the molecule you drew? [y/N]
-```
-
-The check image shows the original next to what m2i parsed, with **atoms
-numbered exactly as in the generated input file**, CIP descriptors on every
-defined stereocentre, and undefined ones highlighted in red.
-
-Add `--yes` to skip the prompt in scripts.
-
-## Commands
-
-```bash
-python -m m2i.cli from-smiles "C[C@H](O)/C=C/C(F)Cl" -o out/ --keep 3
+m2i from-molfile drawing.cdx -o out/ -p orca_opt_freq
 ```
 ```bash
-python -m m2i.cli from-molfile drawing.mol -o out/ -p orca_opt_freq
+m2i from-image photo.jpg -o out/
 ```
 ```bash
-python -m m2i.cli from-image photo.png -o out/
+m2i from-molfile complex.cdx --sub P6=iPr2 -p gaussian_opt_freq_def2svp -o out/
 ```
 ```bash
-python -m m2i.cli from-image photo.png --backend all -o out/
+m2i from-cif structure.cif -o out/
 ```
 ```bash
-python -m m2i.cli batch structures.smi -o out/ --manifest out/manifest.csv
-```
-```bash
-python -m m2i.cli gui
-```
-```bash
-python -m m2i.cli doctor
+m2i batch structures.smi -o out/
 ```
 
-`batch` accepts a `.smi`/`.csv` list (`SMILES name` per line) or a folder of
-`.mol`/`.sdf` files, and writes a manifest recording every warning.
+Each run prints what it understood and writes the input and a `.m2i.json`
+provenance record; for organic molecules, also a `_check.png` with the atoms
+numbered as in the input.
+`m2i profiles` lists the calculation recipes; `m2i doctor` shows what is
+installed.
 
-A `.mol` exported from ChemDraw remains the most reliable input of all: the
-wedge bonds are already there, with no model in between.
-
-## Recognition backends
-
-Neither model is installed by default, because their dependencies are mutually
-incompatible and neither can share your environment. Each gets its own
-virtual environment under `~/.m2i/backends` (override with `M2I_BACKEND_HOME`):
+## Browser interface
 
 ```bash
-python -m m2i.cli setup --list
+pip install -e ".[web,crystal]"
 ```
 ```bash
-python -m m2i.cli setup decimer
+m2i gui
+```
+
+Opens at http://localhost:8501. The same routes, one page: give the structure
+(Picture, ChemDraw / molfile, SMILES or Crystal), look at it only when it
+deserves a look, choose Gaussian, ORCA, XYZ or SDF and download the file.
+Metal complexes and crystals get their own steps, with a 3D view that works
+offline. It works on a phone too.
+
+It is a small FastAPI application (`m2i/web/`) serving a plain HTML and
+JavaScript front end (`m2i/web/static/`), with no build step and nothing
+loaded from other sites. `m2i gui --streamlit` still opens the previous
+Streamlit interface.
+
+## Run it as a website
+
+m2i runs as a website from a Linux machine you already have — a lab
+workstation, a spare PC — reached from anywhere through a free Cloudflare
+tunnel: no open ports, no public IP, HTTPS, and photos included. On that
+machine, with Docker installed:
+
+```bash
+sh deploy/lab/m2i.sh check
 ```
 ```bash
-python -m m2i.cli setup molscribe
+sh deploy/lab/m2i.sh start
+```
+```bash
+sh deploy/lab/m2i.sh url
 ```
 
-| | MolScribe | DECIMER |
-|---|---|---|
-| approach | image → graph | image → SMILES sequence |
-| best at | clean, ChemDraw-style depictions | hand-drawn structures |
-| returns | molblock: 2D layout + wedges | a SMILES string |
-| stereochemistry | **measured** off the drawing | generated with the tokens |
-| download | ~2.5 GB | ~1.5 GB |
+The first start builds the image (15–25 minutes); `url` prints the address to
+share. The step-by-step guide — installing Docker, a fixed address on your own
+domain, restricting access to your group, troubleshooting — is in
+[docs/DEPLOY.md](https://github.com/JorgePardos/Molecule2input/blob/main/docs/DEPLOY.md).
 
-`m2i` picks between them by looking at the image: a software export has a
-mathematically pure white background and almost no mid-tones, while a
-photographed drawing does not. The choice is always reported, never silent, and
-`--backend <name>` overrides it.
+The machine needs Linux (x86_64 or arm64), 4 GB of memory for m2i (the photo
+model alone uses 2.4 GB), 10 GB of disk, and outbound internet access. Each
+visitor works in a private session; uploads (up to 20 MB) and generated files
+stay on that machine, and are removed a day after they were last used.
 
-With both installed, `--backend all` runs them together and compares InChIKeys:
-
-- **identical** → the strongest confidence signal m2i can give you;
-- **same skeleton, different stereochemistry** → a loud warning naming both readings;
-- **different molecules** → the higher-confidence reading is kept and flagged for review.
-
-When they disagree only on stereochemistry, the reading that came with a
-molblock wins, because a measured wedge beats a generated one.
-
-Remove a backend with `python -m m2i.cli setup <name> --remove`; nothing else
-on the system is touched.
-
-## Profiles
-
-A profile is the calculation recipe, kept out of the command line:
-
-```yaml
-name: gaussian_opt_freq
-program: gaussian
-method: b3lyp
-basis: 6-31G(d)
-dispersion: gd3bj
-solvent: {model: smd, name: chloroform}
-jobs: [opt, freq]
-resources: {mem: 8GB, nproc: 8}
-```
-
-Profiles are searched in `$M2I_PROFILE_PATH`, then `./profiles`, then
-`~/.m2i/profiles`, then the built-in ones — so a local file shadows a built-in
-of the same name. `python -m m2i.cli profiles` lists them.
-
-Anything in a profile can be overridden per run: `--program`, `--method`,
-`--basis`, `--charge`, `--mult`, `--conformers`, `--keep`, `--force-field`,
-`--seed`.
+The same image runs on any Docker host (`docker build -t m2i .`). Hugging
+Face Spaces also run it, but Docker Spaces need a paid plan since July 2026;
+the block at the top of this file is their configuration and
+`deploy/push_space.sh` publishes to one.
 
 ## What it protects you from
 
-- **Undefined stereocentres.** `FindPotentialStereo` separates "the drawing
-  never defined this centre" from "the recognition lost it". Both look
-  identical in a SMILES; neither is ever resolved silently.
-- **Phantom stereocentres at phosphorus.** A phosphodiester is written with one
-  `P=O` and one `P–O⁻`, so RDKit sees four different substituents and calls the
-  phosphorus potentially stereogenic. The charge is delocalised over both
-  oxygens, the centre is not stereogenic, and the DNA backbone is famously not
-  chiral there. Unfiltered, that warning fires on every nucleotide, ATP and
-  phospholipid — which teaches you to ignore exactly the warnings this program
-  exists to give. The discriminator is the element: in a phosphorothioate the
-  pair is `=S` and `O⁻`, resonance does not interchange them, Sp/Rp is real,
-  and the warning still fires.
-- **Silent inversion during embedding.** Every conformer is re-labelled from
-  its own 3D coordinates and compared against the 2D perception. Anything that
-  inverted is discarded; if all of them invert, the run fails rather than
-  writing the wrong enantiomer.
-- **Collapsed rotamers.** Pruning happens *after* the force-field
-  minimisation and keeps hydrogens on heteroatoms, so O–H and N–H rotamers
-  survive — they are genuinely different structures for a QM calculation.
-- **Broken input files.** Gaussian's blank-line layout, `gen`/`genecp` without
-  a basis block, basis sets that do not cover a heavy element, impossible
-  charge/multiplicity combinations.
-- **Losing track.** Every input gets a `<name>.m2i.json` sidecar with the
-  SMILES, InChIKey, CIP labels, conformer energies, random seed, versions and
-  the full list of warnings.
-
-## Output
-
-For `python -m m2i.cli from-smiles "CCCCCCO" --keep 3 -o out/`:
-
-```
-out/
-  ZSIAUFGUXNUGDI_c01.gjf     lowest-energy conformer
-  ZSIAUFGUXNUGDI_c02.gjf
-  ZSIAUFGUXNUGDI_c03.gjf
-  ZSIAUFGUXNUGDI_check.png   the verification image
-  ZSIAUFGUXNUGDI.m2i.json    provenance
-```
+- **Misread photos** — see above.
+- **Undefined stereocentres**, reported by name and never assigned at random.
+- **Phantom stereocentres at phosphorus**: a phosphodiester's P is not
+  stereogenic, however it is written; a phosphorothioate's is, and is flagged.
+- **Silent inversion in 3D**: every conformer's stereochemistry is compared
+  with the structure's, and inverted ones are discarded.
+- **Invented substituents**: a phosphine drawn as a bare P is filled with
+  hydrogen, said out loud, and the real groups asked for; unattended, the
+  command line will not write it without `--yes`.
+- **Wrong isomers of complexes**: the built complex must have the trans pairs
+  and the handedness chosen, or nothing is written.
+- **Impossible electronic states**: a multiplicity the electron count forbids
+  is refused.
+- **Broken input files**: Gaussian's blank-line layout, basis sets that do not
+  cover an element (an ECP is added), `gen` without a basis block.
+- **Losing track**: every input comes with a provenance record — versions,
+  structure, source and confidence, profile, conformers, and every warning and
+  decision.
 
 ## Status
 
-Complete: the pipeline, the CLI, the GUI, and both vision backends.
-
-Verified on Windows 11 with the Microsoft Store build of Python 3.11.9. Both
-models install and run on CPU, and on a test depiction of
-`C[C@H](O)/C=C/c1ccc(Cl)cc1` both returned exactly that structure —
-stereocentre and double-bond geometry included, same InChIKey.
-
-Two things worth knowing if you port this elsewhere:
-
-- Upstream MolScribe pins `opencv-python==4.5.5.64`, which looks like it rules
-  out Python 3.11. It does not: that release ships an **abi3** wheel, so the
-  `cp36` tag covers every later CPython.
-- Its `albumentations` dependency pulls in both a newer NumPy and the
-  *headless* opencv distribution. Two opencv packages in one environment write
-  the same `cv2` module and whichever installs last wins, so the pins are
-  repeated in the second install step rather than stated once.
-
-## Tests
+Verified on Windows 11 with Python 3.11 and DECIMER on CPU, from the command
+line and in the browser, locally and in hosted mode. The Docker image has not
+been built on a Linux machine yet; every package it pins has Linux wheels for
+both x86_64 and arm64.
 
 ```bash
 python -m pytest -q
 ```
+
+## Licence
+
+MIT. The bundled 3D viewer, [3Dmol.js](https://3dmol.csb.pitt.edu), is
+BSD-3-Clause (`m2i/gui/viewer/`). The crystal structures used in the tests
+come from the [Crystallography Open Database](https://www.crystallography.net)
+and are public domain (CC0).

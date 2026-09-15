@@ -1,7 +1,7 @@
 """Installing the vision backends into their own virtual environments.
 
-Each recognition model has a dependency set that cannot coexist with the
-others or with m2i itself, so `m2i setup <name>` builds a dedicated venv,
+The recognition model (DECIMER, for hand-drawn structures) brings TensorFlow,
+which cannot share an environment with m2i itself, so `m2i setup <name>` builds a dedicated venv,
 installs a curated requirement list into it, downloads the model weights, and
 writes a marker file recording exactly what landed there.
 
@@ -27,7 +27,7 @@ from .recognition._subprocess import (
     worker_path,
 )
 
-#: pip can take a long time on a cold cache; torch and tensorflow are large.
+#: pip can take a long time on a cold cache; tensorflow is large.
 INSTALL_TIMEOUT = 3600
 WARMUP_TIMEOUT = 1800
 
@@ -52,57 +52,6 @@ class BackendSpec:
     notes: str = ""
 
 
-MOLSCRIBE = BackendSpec(
-    name="molscribe",
-    description=(
-        "image-to-graph; predicts atoms with 2D coordinates and wedge bonds, so "
-        "R/S and E/Z are measured off the layout rather than generated"
-    ),
-    strength="clean, ChemDraw-style depictions",
-    returns_molblock=True,
-    worker="molscribe_worker.py",
-    download_size="about 2.5 GB (torch, then a 400 MB checkpoint)",
-    install_steps=(
-        # One resolver pass for everything version-sensitive: MolScribe's Swin
-        # encoder predates NumPy 2, and opencv 4.5.5.64 ships an abi3 wheel that
-        # does install on current Python despite the cp36 tag.
-        (
-            "numpy<2",
-            "torch",
-            "torchvision",
-            "opencv-python==4.5.5.64",
-            "transformers",
-            "huggingface-hub",
-            "SmilesPE==0.0.3",
-            "OpenNMT-py==2.2.0",
-            "rdkit<2024.9",
-            "tensorboardX",
-            "pandas",
-            "matplotlib",
-        ),
-        # Upstream pins git commits from early 2022; these are the released
-        # versions from the same window and install without a source build.
-        # The pins are repeated here on purpose: albumentations pulls both a
-        # newer NumPy and the *headless* opencv distribution, and two opencv
-        # packages in one environment overwrite the same `cv2` module -- which
-        # of them wins then depends on install order.
-        (
-            "numpy<2",
-            "opencv-python==4.5.5.64",
-            "opencv-python-headless==4.5.5.64",
-            "timm==0.5.4",
-            "albumentations==1.1.0",
-        ),
-        # MolScribe's sdist declares no dependencies, so --no-deps only skips a
-        # re-resolution that would otherwise pull NumPy 2 back in.
-        ("--no-deps", "MolScribe==1.1.1"),
-    ),
-    notes=(
-        "Returns a molblock, which is why m2i prefers it when both backends "
-        "agree on the connectivity."
-    ),
-)
-
 DECIMER = BackendSpec(
     name="decimer",
     description=(
@@ -120,7 +69,7 @@ DECIMER = BackendSpec(
     ),
 )
 
-SPECS: dict[str, BackendSpec] = {MOLSCRIBE.name: MOLSCRIBE, DECIMER.name: DECIMER}
+SPECS: dict[str, BackendSpec] = {DECIMER.name: DECIMER}
 
 
 # -- status --------------------------------------------------------------

@@ -86,6 +86,10 @@ class JobProfile:
     # Follow-up jobs chained with --Link1-- (Gaussian) or written as extra files.
     link_jobs: tuple[dict, ...] = ()
     description: str = ""
+    # Basis (with its ECP) for elements the main basis does not cover, such as
+    # a metal beyond Kr with a Pople basis. None = the writer's default:
+    # LANL2DZ in Gaussian, def2-TZVP with def2-ECP in ORCA.
+    ecp_basis: str | None = None
 
     def validate(self) -> None:
         if self.program not in PROGRAMS:
@@ -134,6 +138,7 @@ class JobProfile:
             "extra_sections",
             "link_jobs",
             "description",
+            "ecp_basis",
         }
         if unknown:
             raise ProfileError(f"unknown profile keys: {', '.join(sorted(unknown))}")
@@ -164,6 +169,7 @@ class JobProfile:
             extra_sections=tuple(_as_list(data.get("extra_sections"))),
             link_jobs=tuple(data.get("link_jobs") or ()),
             description=str(data.get("description", "")),
+            ecp_basis=(str(data["ecp_basis"]) if data.get("ecp_basis") else None),
         )
         profile.validate()
         return profile
@@ -205,6 +211,8 @@ class JobProfile:
             d["extra_keywords"] = list(self.extra_keywords)
         if self.description:
             d["description"] = self.description
+        if self.ecp_basis:
+            d["ecp_basis"] = self.ecp_basis
         return d
 
 

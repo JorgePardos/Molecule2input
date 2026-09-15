@@ -1,6 +1,6 @@
 """The contract every recognition backend must satisfy.
 
-Phase 2 backends (MolScribe, DECIMER) live in their own virtual environments
+Vision backends (DECIMER) live in their own virtual environments
 and are driven over a subprocess, but they return exactly this object, so
 nothing downstream needs to change when they are plugged in.
 """

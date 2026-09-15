@@ -1,9 +1,8 @@
 """Bridge to a recognition model living in its own virtual environment.
 
-The vision backends cannot share an environment with m2i or with each other:
-MolScribe pins ``numpy<2``, DECIMER pulls in TensorFlow, and m2i itself runs on
-a current RDKit and NumPy 2.x. Each backend therefore gets its own venv and is
-driven as a subprocess.
+A vision backend cannot share an environment with m2i: DECIMER pulls in
+TensorFlow and its own pins, while m2i runs on a current RDKit and NumPy. Each
+backend therefore gets its own venv and is driven as a subprocess.
 
 The protocol deliberately does **not** use stdout for the payload. These models
 print progress bars, TensorFlow banners and CUDA warnings; anything sharing the
@@ -13,11 +12,15 @@ files, and stdout/stderr are captured only to explain failures.
 
 from __future__ import annotations
 
+import atexit
 import json
 import os
 import subprocess
 import sys
 import tempfile
+import threading
+import time
+import uuid
 from pathlib import Path
 
 from ..types import RecognitionResult
@@ -102,14 +105,7 @@ def run_worker(
         request = dict(request, response_path=str(response_file))
         request_file.write_text(json.dumps(request), encoding="utf-8")
 
-        # Force UTF-8 and unbuffered output so error text survives the trip,
-        # and keep the worker from importing anything from the caller's env.
-        env = dict(os.environ)
-        env["PYTHONIOENCODING"] = "utf-8"
-        env["PYTHONNOUSERSITE"] = "1"
-        env.pop("PYTHONPATH", None)
-        env.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
-        env.setdefault("TRANSFORMERS_VERBOSITY", "error")
+        env = _worker_env()
 
         try:
             completed = subprocess.run(
@@ -143,6 +139,138 @@ def run_worker(
     return payload
 
 
+class PersistentWorker:
+    """One model kept loaded in its own process, answering requests in turn.
+
+    Starting a worker per image re-imports TensorFlow and reloads the weights
+    every time: most of a minute for DECIMER, for a prediction that takes a
+    few seconds. A server makes that unbearable, so the process stays up.
+    Requests go in one JSON line at a time on stdin; answers come back as
+    files, as in a one-shot run. A lock serialises callers -- the models are
+    not thread-safe, and on a two-core machine running them side by side would
+    not be faster anyway.
+
+    The model's output goes to a log file rather than a pipe: a pipe nobody
+    reads fills up, and the worker would then block forever mid-banner.
+    """
+
+    def __init__(self, name: str, interpreter: Path, script: Path) -> None:
+        self.name = name
+        self.closed = False
+        self.lock = threading.Lock()
+        self.workspace = Path(tempfile.mkdtemp(prefix=f"m2i-{name}-"))
+        self.log_path = self.workspace / "worker.log"
+        self._log = open(self.log_path, "w", encoding="utf-8", errors="replace")  # noqa: SIM115
+        self.process = subprocess.Popen(
+            [str(interpreter), str(script), "--serve"],
+            stdin=subprocess.PIPE,
+            stdout=self._log,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=_worker_env(),
+        )
+
+    def alive(self) -> bool:
+        return not self.closed and self.process.poll() is None
+
+    def ask(self, request: dict, timeout: int) -> dict:
+        with self.lock:
+            response = self.workspace / f"{uuid.uuid4().hex}.json"
+            try:
+                self.process.stdin.write(json.dumps(dict(request, response_path=str(response))) + "\n")
+                self.process.stdin.flush()
+            except (BrokenPipeError, OSError, ValueError) as exc:
+                raise BackendError(f"{self.name} stopped unexpectedly.\n{self._tail()}") from exc
+            deadline = time.monotonic() + timeout
+            while not response.is_file():
+                if not self.alive():
+                    raise BackendError(
+                        f"{self.name} produced no result (exit code {self.process.returncode}).\n"
+                        f"{self._tail()}"
+                    )
+                if time.monotonic() > deadline:
+                    self.close()  # a stuck model is not given the next request too
+                    raise BackendError(
+                        f"{self.name} timed out after {timeout}s. A first run downloads the "
+                        "model weights and can be slow; try again, or raise the timeout."
+                    )
+                time.sleep(0.05)
+            try:
+                payload = json.loads(response.read_text(encoding="utf-8"))
+            except json.JSONDecodeError as exc:
+                raise BackendError(f"{self.name} returned a malformed response: {exc}") from exc
+            finally:
+                response.unlink(missing_ok=True)
+        if not payload.get("ok"):
+            raise BackendError(f"{self.name}: {payload.get('error', 'unknown failure')}")
+        return payload
+
+    def close(self) -> None:
+        if self.closed:
+            return
+        self.closed = True
+        try:
+            self.process.stdin.close()  # a healthy worker exits on end of input
+            self.process.wait(timeout=5)
+        except Exception:  # noqa: BLE001 - a stuck one is stopped regardless
+            self.process.kill()
+            self.process.wait()
+        self._log.close()
+
+    def _tail(self) -> str:
+        try:
+            if not self._log.closed:
+                self._log.flush()
+            return _tail(self.log_path.read_text(encoding="utf-8", errors="replace"))
+        except (OSError, ValueError):
+            return ""
+
+
+_WORKERS: dict[tuple[str, str], PersistentWorker] = {}
+_WORKERS_LOCK = threading.Lock()
+
+
+def persistent_worker(name: str, worker: str | Path, python: Path | None = None) -> PersistentWorker:
+    """The running worker for this model, started (or restarted) if needed."""
+    interpreter = python or venv_python(name)
+    if not interpreter.is_file():
+        raise BackendError(
+            f"{name} is not installed (no interpreter at {interpreter}). "
+            f"Run: m2i setup {name}"
+        )
+    script = worker_path(worker)
+    key = (str(interpreter), str(script))
+    with _WORKERS_LOCK:
+        current = _WORKERS.get(key)
+        if current is None or not current.alive():
+            if current is not None:
+                current.close()
+            current = _WORKERS[key] = PersistentWorker(name, interpreter, script)
+        return current
+
+
+@atexit.register
+def stop_workers() -> None:
+    with _WORKERS_LOCK:
+        for worker in _WORKERS.values():
+            worker.close()
+        _WORKERS.clear()
+
+
+def _worker_env() -> dict:
+    # UTF-8 so error text survives the trip, and nothing imported from the
+    # caller's environment.
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONNOUSERSITE"] = "1"
+    env.pop("PYTHONPATH", None)
+    env.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
+    env.setdefault("TRANSFORMERS_VERBOSITY", "error")
+    return env
+
+
 def recognize_with_worker(
     name: str,
     worker: str | Path,
@@ -152,12 +280,8 @@ def recognize_with_worker(
     timeout: int,
     python: Path | None = None,
 ) -> RecognitionResult:
-    payload = run_worker(
-        name,
-        worker,
-        dict(request, image_path=str(Path(image_path).resolve())),
-        timeout=timeout,
-        python=python,
+    payload = persistent_worker(name, worker, python).ask(
+        dict(request, image_path=str(Path(image_path).resolve())), timeout
     )
     smiles = payload.get("smiles") or ""
     if not smiles and not payload.get("molblock"):
