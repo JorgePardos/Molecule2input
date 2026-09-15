@@ -62,6 +62,7 @@ cmd_check() {
     fi
     # The tunnel only goes out: to Cloudflare on port 7844. A firewall that
     # blocks it leaves the site unreachable even though everything runs.
+    # Only TCP is tested; the tunnels use http2 over TCP, so blocked UDP is fine.
     if ! command -v bash >/dev/null 2>&1 || ! command -v timeout >/dev/null 2>&1; then
         echo "cloudflare    not tested (needs bash and timeout)"
     elif timeout 5 bash -c 'exec 3<>/dev/tcp/region1.v2.argotunnel.com/7844' 2>/dev/null; then

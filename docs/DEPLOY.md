@@ -139,6 +139,13 @@ port 7844.
 **The address stopped working** — with a quick tunnel, it changed: run
 `m2i.sh url` again.
 
+**Cloudflare "Error 1033" although `m2i.sh status` shows everything up** — the
+tunnel got an address but cannot connect. Look at
+`docker compose -f deploy/lab/compose.yaml --profile quick logs tunnel-quick`:
+repeated `failed to dial to edge with quic` means the network drops outbound
+UDP. The tunnels here already use `--protocol http2` (TCP 7844) for that
+reason; if you run an older copy, `m2i.sh update`.
+
 **"That file is larger than 20 MB"** — the upload limit. Raise it with
 `M2I_MAX_UPLOAD_MB` in `deploy/lab/compose.yaml` (under `app: environment:`).
 
