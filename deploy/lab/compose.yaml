@@ -31,7 +31,10 @@ services:
   tunnel-quick:
     image: cloudflare/cloudflared:latest
     profiles: [quick]
-    command: tunnel --no-autoupdate --url http://app:7860
+    # http2 (TCP) rather than the default QUIC (UDP): many institutional
+    # networks drop outbound UDP, and a quick tunnel does not fall back on its
+    # own -- it gets an address and then never connects (Cloudflare error 1033).
+    command: tunnel --no-autoupdate --protocol http2 --url http://app:7860
     depends_on:
       app: {condition: service_healthy}
     restart: unless-stopped
@@ -40,7 +43,7 @@ services:
   tunnel:
     image: cloudflare/cloudflared:latest
     profiles: [named]
-    command: tunnel --no-autoupdate run
+    command: tunnel --no-autoupdate --protocol http2 run
     environment:
       TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
     depends_on:
