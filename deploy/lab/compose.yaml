@@ -19,6 +19,9 @@ services:
       context: ../..
     image: m2i:latest
     restart: unless-stopped
+    environment:
+      M2I_MAX_UPLOAD_MB: "20"   # the largest file a visitor may upload
+      # M2I_SECRET: "..."       # optional: keeps sessions valid across restarts
     # Reachable from this machine only (http://localhost:7860), for checking.
     # Everyone else comes in through the tunnel.
     ports:

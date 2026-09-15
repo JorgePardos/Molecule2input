@@ -100,13 +100,22 @@ installed.
 ## Browser interface
 
 ```bash
+pip install -e ".[web,crystal]"
+```
+```bash
 m2i gui
 ```
 
-The same routes in three steps: give the structure (Picture, ChemDraw /
-molfile, SMILES or Crystal); look at it when it deserves a look; choose
-Gaussian, ORCA, XYZ or SDF and download the file. Metal complexes and crystals
-get their own pages, with a 3D view that works offline.
+Opens at http://localhost:8501. The same routes, one page: give the structure
+(Picture, ChemDraw / molfile, SMILES or Crystal), look at it only when it
+deserves a look, choose Gaussian, ORCA, XYZ or SDF and download the file.
+Metal complexes and crystals get their own steps, with a 3D view that works
+offline. It works on a phone too.
+
+It is a small FastAPI application (`m2i/web/`) serving a plain HTML and
+JavaScript front end (`m2i/web/static/`), with no build step and nothing
+loaded from other sites. `m2i gui --streamlit` still opens the previous
+Streamlit interface.
 
 ## Run it as a website
 
@@ -137,11 +146,8 @@ stay on that machine, and are removed a day after they were last used.
 
 The same image runs on any Docker host (`docker build -t m2i .`). Hugging
 Face Spaces also run it, but Docker Spaces need a paid plan since July 2026;
-the block at the top of this file is their configuration,
-`deploy/push_space.sh` publishes to one, and there
-`STREAMLIT_SERVER_ENABLE_CORS` and `STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION`
-must be set to `false` in the Space's variables, because the page is shown
-inside a frame on another domain.
+the block at the top of this file is their configuration and
+`deploy/push_space.sh` publishes to one.
 
 ## What it protects you from
 

@@ -31,6 +31,11 @@ asking you to confirm structures that could not have been misread.
   Hugging Face Space instead, which needs a paid plan since July 2026.
 - **Photos on the web**: the image includes DECIMER, the model for hand-drawn
   structures, kept loaded between pictures.
+- **A new web interface** (`m2i gui`): a FastAPI application and a plain
+  HTML/JavaScript page built from the design handoff — one page with the
+  steps on the side, the check shown only when it is needed, a start screen
+  while the photo model loads, and a layout for phones. The Streamlit
+  interface remains as `m2i gui --streamlit`.
 - `docs/MANUAL.md`, a full user manual; this changelog.
 - Profile `gaussian_opt_freq_def2svp` (B3LYP-D3(BJ)/def2-SVP, ultrafine grid).
 - Automatic effective core potentials when a basis set stops short of an

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>m2i · molecule to calculation input</title>
+  <meta name="description" content="From a molecule — typed, drawn in ChemDraw, photographed from paper, or taken from a crystal structure — to a Gaussian, ORCA, XYZ or SDF input file.">
+  <link rel="icon" href="logo.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+  <script src="/viewer/3Dmol-min.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header class="header">
+    <a class="brand" href="/" id="home">
+      <img src="logo.svg" alt="m2i">
+      <div class="brand-name">m2i<span> · molecule to calculation input</span></div>
+    </a>
+    <div class="header-context" id="context"></div>
+  </header>
+  <div class="progress" id="progress"></div>
+  <div class="shell">
+    <nav class="nav" id="nav" aria-label="Steps"></nav>
+    <main class="main" id="main">
+      <noscript>m2i needs JavaScript to run in the browser. The command line works without it: see the README.</noscript>
+    </main>
+  </div>
+  <div class="splash" id="splash" hidden></div>
+  <div class="toast" id="toast" hidden></div>
+</body>
+</html>

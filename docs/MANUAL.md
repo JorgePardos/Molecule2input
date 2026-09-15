@@ -31,11 +31,11 @@ Contents
 Python 3.10 or newer. From the repository folder:
 
 ```bash
-pip install -e ".[gui,crystal]"
+pip install -e ".[web,crystal]"
 ```
 
 - The core needs RDKit, NumPy, Pillow and PyYAML.
-- `gui` adds Streamlit, for the browser interface.
+- `web` adds FastAPI and Uvicorn, for the browser interface (`gui`, the older Streamlit one, still works).
 - `crystal` adds gemmi, for CIF files.
 
 On Windows, if `m2i` is not found after installing (common with the Microsoft
@@ -454,18 +454,23 @@ m2i gui
 ```
 
 Opens at http://localhost:8501 (`--port` for another). The same routes as the
-command line, in three steps:
+command line, on one page, with the steps listed on the left:
 
 1. **Structure** — choose Picture, ChemDraw / molfile, SMILES or Crystal
-   (.cif), and give it.
-2. **Structure / Check** — for a structure that needs no check, one line
-   (`Not checked: …`) with its depiction in a collapsed panel. For a photo
-   reading in doubt, the photo next to the reading, the reasons, and a box
-   "This is the molecule I drew" that must be ticked before an input can be
-   generated. The SMILES can be edited in both cases.
+   (.cif), and give it: drop the file or type the SMILES. A photo is read as
+   soon as it is given.
+2. **Check** — for a structure that needs no check, one line ("no check
+   needed") with its depiction a click away. For a photo reading in doubt, the
+   photo next to the reading, the reasons, and two buttons: "Not this
+   molecule" (then correct the SMILES) and "This is the molecule I drew",
+   which opens the output. The SMILES can be edited in both cases.
 3. **Output** — choose Gaussian, ORCA, XYZ or SDF. Only that program's
    settings are shown (recipe, method, basis, dispersion, solvent, cores,
-   memory); press Generate and download the file.
+   memory); press Generate, preview the file and download it with its
+   provenance record.
+
+**Advanced**, under the steps, overrides the charge and multiplicity and sets
+the conformer search. On a phone the steps become a progress bar at the top.
 
 A ChemDraw file with a metal opens the complex page: the table of what the
 drawing leaves out, the list of arrangements, a 3D view of the built complex

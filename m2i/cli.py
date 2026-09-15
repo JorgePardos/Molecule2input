@@ -217,6 +217,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     gui_parser = subparsers.add_parser("gui", help="launch the browser interface")
     gui_parser.add_argument("--port", type=int, default=8501)
+    gui_parser.add_argument(
+        "--streamlit", action="store_true",
+        help="the previous Streamlit interface instead of the web one",
+    )
 
     return parser
 
@@ -936,18 +940,28 @@ def cmd_profiles(args) -> int:
 
 
 def cmd_gui(args) -> int:
-    try:
-        from streamlit.web import cli as stcli
-    except ImportError:
-        print(
-            "error: the GUI needs streamlit.\n       pip install streamlit",
-            file=sys.stderr,
-        )
-        return 1
+    if args.streamlit:
+        try:
+            from streamlit.web import cli as stcli
+        except ImportError:
+            print("error: the Streamlit interface needs streamlit.\n       pip install streamlit",
+                  file=sys.stderr)
+            return 1
+        app = Path(__file__).parent / "gui" / "app.py"
+        sys.argv = ["streamlit", "run", str(app), "--server.port", str(args.port)]
+        return stcli.main()
 
-    app = Path(__file__).parent / "gui" / "app.py"
-    sys.argv = ["streamlit", "run", str(app), "--server.port", str(args.port)]
-    return stcli.main()
+    try:
+        import fastapi  # noqa: F401
+        import uvicorn
+    except ImportError:
+        print('error: the browser interface needs its web extra.\n       pip install -e ".[web]"',
+              file=sys.stderr)
+        return 1
+    print(f"m2i is running at http://localhost:{args.port}  (Ctrl+C to stop)")
+    # One process: the sessions and the loaded photo model live in its memory.
+    uvicorn.run("m2i.web.main:app", host="127.0.0.1", port=args.port, workers=1, log_level="warning")
+    return 0
 
 
 # -- shared machinery ----------------------------------------------------

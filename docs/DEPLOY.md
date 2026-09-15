@@ -110,10 +110,12 @@ policy on that hostname, without changing m2i.
 
 ## How it is put together
 
-- `Dockerfile` — the application, DECIMER in its own environment with its
-  weights, run as an unprivileged user in hosted mode (`M2I_HOSTED=1`: no
-  server paths or local options shown), uploads capped at 20 MB, Streamlit's
-  XSRF protection on.
+- `Dockerfile` — the web application (FastAPI serving the API and the page
+  on port 7860), DECIMER in its own environment with its weights, run as an
+  unprivileged user in hosted mode (`M2I_HOSTED=1`), one worker process,
+  uploads capped at 20 MB (`M2I_MAX_UPLOAD_MB`). Sessions are signed cookies;
+  every response carries a strict Content-Security-Policy, and the page loads
+  nothing from other sites.
 - `deploy/lab/compose.yaml` — two containers: `app`, and `cloudflared`, which
   reaches the app over Docker's internal network. The app's port is published
   on `127.0.0.1` only, so the lab network cannot reach it directly. Logs are
@@ -121,8 +123,11 @@ policy on that hostname, without changing m2i.
 - Each visitor works in a private temporary folder; folders untouched for a
   day are removed when new sessions start, so the disk does not fill over
   months.
-- The photo model is loaded once, when the first visitor opens the page, and
-  stays in memory; each photo after that takes a couple of seconds.
+- The photo model starts loading as soon as the server starts, and stays in
+  memory; each photo after that takes a couple of seconds. Whoever opens the
+  page in the meantime sees a short "Starting m2i" screen, can already use
+  SMILES, ChemDraw files and CIFs, and is let in by the page itself when the
+  model is ready.
 
 ## Troubleshooting
 
@@ -134,8 +139,8 @@ port 7844.
 **The address stopped working** — with a quick tunnel, it changed: run
 `m2i.sh url` again.
 
-**Uploads fail with a 403** — something in front of the site is showing it
-inside a frame on another domain. Open the address directly.
+**"That file is larger than 20 MB"** — the upload limit. Raise it with
+`M2I_MAX_UPLOAD_MB` in `deploy/lab/compose.yaml` (under `app: environment:`).
 
 **The machine runs out of memory** — `m2i.sh status` shows who uses it.
 m2i needs about 3 GB with the photo model loaded; heavy conformer searches or
