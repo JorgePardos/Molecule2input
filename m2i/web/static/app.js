@@ -70,7 +70,7 @@
     expanded: false,
     notThis: false,
     advanced: { charge: "", mult: "", keepAll: false, keep: 1, nconfs: "", forceField: "mmff94s", seed: 61453 },
-    output: { format: "gaussian", recipes: {}, recipe: {}, fields: {}, problem: null, jobs: "" },
+    output: { format: "gaussian", recipes: {}, recipe: {}, fields: {}, problem: null, jobs: "", name: "" },
     result: null,
     smilesDraft: "",
     om: null,
@@ -522,7 +522,7 @@
     } else if (!passed) {
       out.push(h("div", { class: "caption section" }, "Step 3 · Output unlocks once the structure is confirmed."));
     } else {
-      out.push(renderOutput({ formats: ["gaussian", "orca", "xyz", "sdf"], onGenerate: generateOrganic }));
+      out.push(renderOutput({ formats: ["gaussian", "orca", "xyz", "sdf"], suggested: check.molecule.name, onGenerate: generateOrganic }));
     }
     return out;
   }
@@ -755,6 +755,7 @@
     } else if (fmt === "sdf") {
       panel.append(h("div", { class: "caption" }, "Geometry only, but it keeps bonds, charges and stereochemistry: the format to hand to another cheminformatics tool."));
     }
+    panel.append(nameField(context));
     panel.append(outputFoot(context));
     const out = [section(context.eyebrow || "Step 3 · Output", panel)];
     if (context.blocked) out.push(strip("warn", context.blocked));
@@ -766,6 +767,30 @@
   function textField(label, value, oninput, focus, placeholder, type) {
     return h("div", null, h("label", { class: "label" }, label),
       h("input", { class: "field", type: type || "text", min: type === "number" ? 1 : null, value: value === undefined || value === null ? "" : value, placeholder, "data-focus": focus, oninput, spellcheck: false }));
+  }
+
+  // The written files take this name; blank leaves it to m2i (the formula, the
+  // molecule's own name, the CIF it came from). Cleaned here as the server does.
+  function cleanName(text) {
+    return (text || "").trim().replace(/[^A-Za-z0-9_-]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 60);
+  }
+
+  function nameField(context) {
+    const suggested = context.suggested || "molecule";
+    const note = h("div", { class: "small", style: { marginTop: "6px" } }, nameHint(suggested));
+    return h("div", { style: { marginTop: "16px", maxWidth: "520px" } },
+      textField("File name", state.output.name, (e) => {
+        state.output.name = e.target.value;
+        note.textContent = nameHint(suggested);
+      }, "output-name", suggested),
+      note);
+  }
+
+  function nameHint(suggested) {
+    const stem = cleanName(state.output.name) || suggested;
+    const several = showAdvanced() && Number(state.advanced.keep) > 1;
+    const files = `${stem}${several ? "_c01" : ""}${FORMATS[state.output.format][0]}`;
+    return cleanName(state.output.name) ? `Written as ${files}` : `Written as ${files}, unless you name it yourself`;
   }
 
   function outputFoot(context) {
@@ -788,7 +813,7 @@
   function signature() {
     const source = currentSource();
     const check = currentCheck();
-    const base = { kind: state.kind, settings: settings() };
+    const base = { kind: state.kind, settings: settings(), name: cleanName(state.output.name) };
     if (state.kind === "file" && state.om) return JSON.stringify({ ...base, om: state.om.key, st: state.om.state, mult: state.om.multiplicity });
     if (state.kind === "cif" && state.cif) return JSON.stringify({ ...base, cif: state.cif.summary && state.cif.summary.key, st: state.cif.state, mult: state.cif.multiplicity });
     return JSON.stringify({ ...base, key: source && source.key, smiles: check && check.molecule && check.molecule.smiles, advanced: state.advanced });
@@ -822,6 +847,7 @@
     return runGenerate("/api/generate", {
       key: source.key,
       settings: settings(),
+      name: cleanName(state.output.name) || null,
       conformers: { n_confs: a.nconfs === "" ? null : Number(a.nconfs), keep: Number(a.keep) || 1, seed: Number(a.seed) || 61453, force_field: a.forceField },
       overrides: { charge: a.charge === "" ? null : Number(a.charge), multiplicity: a.mult === "" ? null : Number(a.mult), keep_all_fragments: a.keepAll },
     });
@@ -1008,14 +1034,14 @@
 
     out.push(electronicSection("Step 3 · Electronic state", d.electronic, om, refreshComplex));
     const blocked = !om.multiplicity ? "Choose the spin state to continue." : null;
-    out.push(renderOutput({ eyebrow: "Step 4 · Output", formats: ["gaussian", "orca", "xyz"], blocked, onGenerate: generateComplex }));
+    out.push(renderOutput({ eyebrow: "Step 4 · Output", formats: ["gaussian", "orca", "xyz"], blocked, suggested: d.built.name, onGenerate: generateComplex }));
     return out;
   }
 
   function generateComplex() {
     const om = state.om;
     return runGenerate(`/api/om/${encodeURIComponent(om.key)}/generate`, {
-      ...om.state, charge: om.state.charge ?? om.data.electronic.charge, multiplicity: Number(om.multiplicity), settings: settings(),
+      ...om.state, charge: om.state.charge ?? om.data.electronic.charge, multiplicity: Number(om.multiplicity), settings: settings(), name: cleanName(state.output.name) || null,
     });
   }
 
@@ -1136,14 +1162,14 @@
       ? `${d.species.formula} contains ${e.metals.join(", ")}. A crystal does not record oxidation states, charge or spin, so these are yours to set.` : null;
     out.push(electronicSection("Step 3 · Electronic state", { ...e, charge: e.charge }, cif, refreshCrystal, intro));
     const blocked = d.blockers[0] || (cif.state.charge === null && e.charge === null ? "Set the charge to continue." : null) || (!cif.multiplicity ? "Choose the spin state to continue." : null);
-    out.push(renderOutput({ eyebrow: "Step 4 · Output", formats: ["gaussian", "orca", "xyz"], blocked, onGenerate: generateCrystal }));
+    out.push(renderOutput({ eyebrow: "Step 4 · Output", formats: ["gaussian", "orca", "xyz"], blocked, suggested: d.species.name, onGenerate: generateCrystal }));
     return out;
   }
 
   function generateCrystal() {
     const cif = state.cif;
     return runGenerate(`/api/crystal/${encodeURIComponent(cif.summary.key)}/generate`, {
-      ...cif.state, charge: cif.state.charge ?? cif.data.electronic.charge, multiplicity: Number(cif.multiplicity), settings: settings(),
+      ...cif.state, charge: cif.state.charge ?? cif.data.electronic.charge, multiplicity: Number(cif.multiplicity), settings: settings(), name: cleanName(state.output.name) || null,
     });
   }
 

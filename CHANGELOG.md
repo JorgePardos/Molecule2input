@@ -35,7 +35,9 @@ asking you to confirm structures that could not have been misread.
   HTML/JavaScript page built from the design handoff — one page with the
   steps on the side, the check shown only when it is needed, a start screen
   while the photo model loads, and a layout for phones. The Streamlit
-  interface remains as `m2i gui --streamlit`.
+  interface remains as `m2i gui --streamlit`. The output step takes a **file
+  name** of your own (blank: named after the structure, as before), and the
+  page says who wrote m2i.
 - `docs/MANUAL.md`, a full user manual; this changelog.
 - Profile `gaussian_opt_freq_def2svp` (B3LYP-D3(BJ)/def2-SVP, ultrafine grid).
 - Automatic effective core potentials when a basis set stops short of an

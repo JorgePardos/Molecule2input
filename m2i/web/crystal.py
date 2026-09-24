@@ -20,7 +20,7 @@ from ..crystal import jobs as crystal_jobs
 from ..crystal.coordination import analyse
 from ..types import IssueLog
 from . import recipes, shapes
-from .organic import CIF_SUFFIXES, error, save_upload
+from .organic import CIF_SUFFIXES, chosen_name, error, save_upload
 from .session import Session, current
 
 router = APIRouter(prefix="/api")
@@ -137,7 +137,8 @@ def crystal_state(key: str, state: CrystalState, session: Session = Depends(curr
             blockers.append("Hydrogens are missing from the CIF (see above); nothing will be written.")
         return {
             "species": {"index": index, "formula": species.formula, "atoms": species.n_atoms,
-                        "metals": sorted(set(species.metals)), "completed": added is not None},
+                        "metals": sorted(set(species.metals)), "completed": added is not None,
+                        "name": crystal_jobs.default_name(reading, species)},
             "hydrogens": hydrogens,
             "viewer": shapes.viewer(species),
             "coordination": shapes.coordination(original),
@@ -158,6 +159,7 @@ def crystal_state(key: str, state: CrystalState, session: Session = Depends(curr
 class CrystalGenerate(CrystalState):
     multiplicity: int
     settings: recipes.Settings
+    name: str | None = None  # blank: named after the formula and the CIF
 
 
 @router.post("/crystal/{key}/generate")
@@ -182,6 +184,7 @@ def crystal_generate(key: str, body: CrystalGenerate, session: Session = Depends
             written = crystal_jobs.write(
                 reading, index, charge=body.charge, multiplicity=body.multiplicity,
                 profile=profile, output_dir=session.output, log=log, oxidation=body.oxidation,
+                name=chosen_name(body.name),
                 allow_missing_hydrogens=allow_missing,
                 species=species if added is not None else None, hydrogens_added=added,
                 mirror=body.mirror, priorities=body.priorities,

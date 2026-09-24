@@ -65,10 +65,17 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .header-context { font: 400 12px var(--mono); color: #9aa0b0; display: flex; align-items: center; gap: 8px; text-align: right; }
 
 /* -- shell -------------------------------------------------------------------- */
-.shell { display: grid; grid-template-columns: 210px minmax(0, 1fr); min-height: calc(100vh - 56px); }
+.shell { display: grid; grid-template-columns: 210px minmax(0, 1fr); min-height: calc(100vh - 106px); }
 .nav { padding: 26px 0 26px 26px; border-right: 1px solid #e9ebf0; }
 .main { padding: 26px 30px 38px; max-width: 1180px; width: 100%; }
 .progress { display: none; }
+
+/* -- footer: who made this ---------------------------------------------------- */
+.footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 18px;
+          padding: 14px 30px; border-top: 1px solid #e9ebf0; background: #fafbfc;
+          font: 400 12px var(--sans); color: var(--muted); }
+.footer strong { font-weight: 600; color: var(--ink); }
+.footer a { color: var(--muted); }
 
 .step { display: flex; gap: 11px; align-items: flex-start; }
 .step-track { display: flex; flex-direction: column; align-items: center; }
@@ -325,6 +332,7 @@ details.issues div { font: 400 12px/1.6 var(--sans); color: var(--muted); margin
   .result-bar { flex-wrap: wrap; }
   .result-bar .btn { width: 100%; min-height: 44px; }
   .dropzone { padding: 26px 16px; }
+  .footer { padding: 14px 16px; }
 }
 
 a.btn { text-decoration: none; display: inline-flex; align-items: center; justify-content: center; }

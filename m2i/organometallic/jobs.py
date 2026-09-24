@@ -45,6 +45,11 @@ def ambiguous(options: list[Arrangement]) -> bool:
     return len(options) > 1 and options[1].misfit - options[0].misfit < AMBIGUOUS
 
 
+def default_name(species, source: Path) -> str:
+    """What the files are called when no name is asked for."""
+    return SAFE.sub("_", f"{species.formula}_{Path(source).stem}")
+
+
 def write(
     built: BuiltComplex,
     drawing: OrganometallicDrawing,
@@ -63,7 +68,7 @@ def write(
     if problem:
         raise BackendError(f"impossible electronic state: {problem}")
 
-    stem = SAFE.sub("_", name or f"{species.formula}_{Path(source).stem}")
+    stem = SAFE.sub("_", name) if name else default_name(species, source)
     job = JobSpec(
         name=stem,
         title=(

@@ -157,6 +157,23 @@ def test_one_visitor_cannot_download_anothers_files(client):
         assert stranger.get(f"/api/check/{key}").status_code == 404
 
 
+def test_the_files_take_the_name_asked_for(client):
+    key = give_smiles(client)
+    suggested = client.get(f"/api/check/{key}").json()["molecule"]["name"]
+    assert suggested
+
+    result = client.post("/api/generate", json={
+        "key": key, "settings": {"format": "xyz"}, "name": "PtCl2 dimer/../v2"}).json()
+    # Named as asked, with what a file system would choke on taken out.
+    assert result["files"][0]["name"] == "PtCl2_dimer____v2.xyz"
+    assert all("/" not in f["name"] for f in result["files"] + result["extras"])
+    assert client.get(result["files"][0]["download_url"]).status_code == 200
+
+    # Blank, and it is the molecule's own name again.
+    plain = client.post("/api/generate", json={"key": key, "settings": {"format": "xyz"}, "name": "  "}).json()
+    assert plain["files"][0]["name"] == f"{suggested}.xyz"
+
+
 # -- metal complexes and crystals ---------------------------------------------------------------
 
 

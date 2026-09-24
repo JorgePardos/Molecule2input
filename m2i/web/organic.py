@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+from dataclasses import replace
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
@@ -35,6 +36,17 @@ CIF_SUFFIXES = (".cif",)
 
 def error(message: str, status: int = 400):
     raise HTTPException(status_code=status, detail=message)
+
+
+def chosen_name(text: str | None) -> str | None:
+    """The file name asked for, kept to characters a file system accepts.
+
+    Dots go too: the writers put the extension on with ``with_suffix``, which
+    would read ``run.v2`` as an extension and write ``run.gjf``.
+    """
+    if not text or not text.strip():
+        return None
+    return pipeline.safe_name(text.replace(".", "_"))
 
 
 def save_upload(session: Session, upload: UploadFile, allowed) -> tuple[Path, str]:
@@ -339,6 +351,7 @@ class ConformersIn(BaseModel):
 class GenerateIn(BaseModel):
     key: str
     settings: recipes.Settings
+    name: str | None = None  # blank: named after the molecule
     conformers: ConformersIn = ConformersIn()
     overrides: Overrides = Overrides()
 
@@ -358,6 +371,10 @@ def generate(body: GenerateIn, session: Session = Depends(current)):
         except config.ProfileError as exc:
             error(str(exc))
         review.record(log, decision, confirmed=True if decision.needed else None)
+
+        name = chosen_name(body.name)
+        if name:
+            molecule = replace(molecule, name=name)
 
         options = ConformerOptions(
             n_confs=body.conformers.n_confs or None, keep=max(1, body.conformers.keep),
