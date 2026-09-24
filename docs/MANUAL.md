@@ -466,8 +466,11 @@ command line, on one page, with the steps listed on the left:
    which opens the output. The SMILES can be edited in both cases.
 3. **Output** — choose Gaussian, ORCA, XYZ or SDF. Only that program's
    settings are shown (recipe, method, basis, dispersion, solvent, cores,
-   memory); press Generate, preview the file and download it with its
-   provenance record.
+   memory), and **File name** says what the files will be called — leave it
+   blank and m2i names them after the structure, or type your own
+   (`pincer_Mn_opt`); the line underneath shows the name as it will be
+   written, spaces and dots turned into underscores. Press Generate, preview
+   the file and download it with its provenance record.
 
 **Advanced**, under the steps, overrides the charge and multiplicity and sets
 the conformer search. On a phone the steps become a progress bar at the top.

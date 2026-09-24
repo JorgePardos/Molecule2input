@@ -20,6 +20,7 @@ def new_issues(log: IssueLog, earlier) -> list[dict]:
 def molecule(mol) -> dict:
     stereo = mol.stereo
     return {
+        "name": mol.name,  # what the files are called unless the user renames them
         "formula": mol.formula,
         "smiles": mol.smiles,
         "inchikey": mol.inchikey,

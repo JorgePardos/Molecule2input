@@ -144,6 +144,11 @@ def resolve_planar(centre: MetalCentre, priorities: dict[str, str] | None):
     return resolved
 
 
+def default_name(reading: CrystalReading, species: Species) -> str:
+    """What the files are called when no name is asked for."""
+    return SAFE.sub("_", f"{species.formula}_{reading.cod_id or reading.path.stem}")
+
+
 def write(
     reading: CrystalReading,
     index: int,
@@ -185,7 +190,7 @@ def write(
     if problem:
         raise CrystalError(f"impossible electronic state: {problem}")
 
-    stem = SAFE.sub("_", name or f"{species.formula}_{reading.cod_id or reading.path.stem}")
+    stem = SAFE.sub("_", name) if name else default_name(reading, species)
     source = f"COD {reading.cod_id}" if reading.cod_id else reading.path.name
     job = JobSpec(
         name=stem,

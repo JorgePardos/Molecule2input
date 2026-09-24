@@ -19,7 +19,7 @@ from ..recognition.base import BackendError
 from ..types import IssueLog
 from . import recipes, shapes
 from .crystal import _written
-from .organic import error
+from .organic import chosen_name, error
 from .session import Session, current
 
 router = APIRouter(prefix="/api")
@@ -106,6 +106,7 @@ def complex_state(key: str, state: ComplexState, session: Session = Depends(curr
             "arrangement": choice,
             "built": {
                 "formula": species.formula,
+                "name": om_jobs.default_name(species, Path(source.shown_name or source.path.name)),
                 "viewer": shapes.viewer(species),
                 "coordination": shapes.coordination(species),
                 "notes": [message for _, _, message in built.notes],
@@ -123,6 +124,7 @@ def complex_state(key: str, state: ComplexState, session: Session = Depends(curr
 class ComplexGenerate(ComplexState):
     multiplicity: int
     settings: recipes.Settings
+    name: str | None = None  # blank: named after the formula and the drawing
 
 
 @router.post("/om/{key}/generate")
@@ -143,7 +145,7 @@ def complex_generate(key: str, body: ComplexGenerate, session: Session = Depends
             written = om_jobs.write(
                 built, drawing, source=Path(source.shown_name or source.path.name), charge=body.charge,
                 multiplicity=body.multiplicity, profile=profile, output_dir=session.output, log=log,
-                oxidation=body.oxidation,
+                oxidation=body.oxidation, name=chosen_name(body.name),
             )
         except BackendError as exc:
             error(str(exc))
